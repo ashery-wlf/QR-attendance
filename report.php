@@ -1,0 +1,966 @@
+<?php
+include("includes/auth.php");
+include("includes/db.php");
+include("includes/app.php");
+
+ensureEventSchema($conn);
+appRequireRole(['organization_admin', 'event_organizer']);
+
+$user_id = (int) $_SESSION['user_id'];
+$user_role = $_SESSION['user_role'] ?? 'event_organizer';
+$user_org_id = isset($_SESSION['organization_id']) ? (int) $_SESSION['organization_id'] : 0;
+
+// Get selected event ID from URL or POST
+$selectedEventId = isset($_GET['event_id']) ? (int)$_GET['event_id'] : 0;
+
+// Get user's events based on role
+if ($user_role === 'organization_admin') {
+    // Org Admin: see all org events
+    $userEvents = $conn->query("SELECT * FROM events WHERE organization_id=$user_org_id AND deleted = FALSE ORDER BY date DESC");
+} else {
+    // Event Organizer: own events + org events
+    $userEvents = $conn->query("SELECT * FROM events WHERE (created_by=$user_id OR organization_id=$user_org_id) AND deleted = FALSE ORDER BY date DESC");
+}
+
+// Get attendance statistics for user's events
+$attendanceStats = [];
+$totalAttendance = 0;
+$totalEvents = 0;
+
+if ($userEvents && $userEvents->num_rows > 0) {
+    while ($event = $userEvents->fetch_assoc()) {
+        $eventId = (int)$event['id'];
+        $attendanceResult = $conn->query("SELECT COUNT(*) as count FROM attendance WHERE event_id=$eventId");
+        $attendanceRow = $attendanceResult->fetch_assoc();
+        
+        $attendanceStats[] = [
+            'event_id' => $eventId,
+            'event_name' => $event['name'],
+            'event_date' => $event['date'],
+            'attendance_count' => (int)$attendanceRow['count'],
+            'status' => eventLifecycleStatus($event)
+        ];
+        
+        $totalAttendance += (int)$attendanceRow['count'];
+        $totalEvents++;
+    }
+}
+
+// Get selected event details with access check
+$selectedEvent = null;
+if ($selectedEventId > 0) {
+    $eventQuery = "SELECT * FROM events WHERE id=$selectedEventId AND deleted = FALSE LIMIT 1";
+    $selectedEventData = $conn->query($eventQuery)->fetch_assoc();
+    
+    if ($selectedEventData) {
+        // Check if user has access to this event
+        $hasAccess = false;
+        if ($user_role === 'organization_admin') {
+            $hasAccess = ((int) $selectedEventData['organization_id'] === $user_org_id);
+        } else {
+            $hasAccess = ((int) $selectedEventData['created_by'] === $user_id) || ((int) $selectedEventData['organization_id'] === $user_org_id);
+        }
+        
+        if ($hasAccess) {
+            $selectedEvent = $selectedEventData;
+        }
+    }
+}
+
+// Get device information for selected event or all events
+$deviceStats = [];
+$whereClause = $selectedEventId > 0 ? "WHERE event_id=$selectedEventId" : "WHERE event_id IN (SELECT id FROM events WHERE created_by=$user_id)";
+$deviceResult = $conn->query("
+    SELECT device_info, COUNT(*) as count 
+    FROM attendance 
+    $whereClause
+    AND device_info IS NOT NULL
+    GROUP BY device_info
+");
+
+if ($deviceResult) {
+    while ($row = $deviceResult->fetch_assoc()) {
+        if (!empty($row['device_info'])) {
+            $info = json_decode($row['device_info'], true);
+            if ($info) {
+                $deviceStats[] = [
+                    'browser' => $info['browser'] ?? 'Unknown',
+                    'os' => $info['os'] ?? 'Unknown',
+                    'device_type' => $info['device_type'] ?? 'Unknown',
+                    'count' => (int)$row['count']
+                ];
+            }
+        }
+    }
+}
+
+// Get browser statistics
+$browserStats = [];
+foreach ($deviceStats as $stat) {
+    $browser = $stat['browser'];
+    if (!isset($browserStats[$browser])) {
+        $browserStats[$browser] = 0;
+    }
+    $browserStats[$browser] += $stat['count'];
+}
+
+// Get OS statistics
+$osStats = [];
+foreach ($deviceStats as $stat) {
+    $os = $stat['os'];
+    if (!isset($osStats[$os])) {
+        $osStats[$os] = 0;
+    }
+    $osStats[$os] += $stat['count'];
+}
+
+// Get device type statistics
+$deviceTypeStats = [];
+foreach ($deviceStats as $stat) {
+    $type = $stat['device_type'];
+    if (!isset($deviceTypeStats[$type])) {
+        $deviceTypeStats[$type] = 0;
+    }
+    $deviceTypeStats[$type] += $stat['count'];
+}
+
+// Get detailed attendance records
+$whereClause = $selectedEventId > 0 ? "WHERE e.created_by=$user_id AND e.id=$selectedEventId" : "WHERE e.created_by=$user_id";
+$detailedRecords = $conn->query("
+    SELECT a.*, e.name as event_name, e.target_audience,
+           u.attendee_type, u.reg_no, u.department
+    FROM attendance a
+    JOIN events e ON e.id = a.event_id
+    LEFT JOIN users u ON u.id = a.user_id
+    $whereClause
+    ORDER BY a.time DESC
+    LIMIT 100
+");
+
+$typeWhereClause = $selectedEventId > 0 ? "WHERE e.created_by=$user_id AND e.id=$selectedEventId" : "WHERE e.created_by=$user_id";
+$attendeeTypeAttendanceStats = ['student' => 0, 'staff' => 0, 'guest' => 0, 'unknown' => 0];
+$typeStatsResult = $conn->query("
+    SELECT COALESCE(u.attendee_type, 'unknown') AS attendee_type, COUNT(*) AS total
+    FROM attendance a
+    JOIN events e ON e.id = a.event_id
+    LEFT JOIN users u ON u.id = a.user_id
+    $typeWhereClause
+    GROUP BY COALESCE(u.attendee_type, 'unknown')
+");
+if ($typeStatsResult) {
+    while ($typeRow = $typeStatsResult->fetch_assoc()) {
+        $typeKey = in_array($typeRow['attendee_type'], ['student', 'staff', 'guest'], true) ? $typeRow['attendee_type'] : 'unknown';
+        $attendeeTypeAttendanceStats[$typeKey] = (int) $typeRow['total'];
+    }
+}
+
+$pageCss = <<<'CSS'
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.stat-card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    border-left: 4px solid #667eea;
+}
+
+.stat-card h3 {
+    margin: 0 0 10px 0;
+    color: #667eea;
+    font-size: 14px;
+    text-transform: uppercase;
+}
+
+.stat-card .number {
+    font-size: 32px;
+    font-weight: bold;
+    color: #333;
+}
+
+.chart-container {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    position: relative;
+    height: 400px;
+}
+
+.chart-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 15px;
+    color: #333;
+}
+
+.table-container {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+th {
+    background: #f5f5f5;
+    font-weight: 600;
+    color: #333;
+}
+
+.device-detail-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 2px solid #dbe4f0;
+    border-radius: 999px;
+    padding: 6px 12px;
+    background: #f0f4f8;
+    color: #334155;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.device-detail-trigger:hover {
+    background: #e0e8f0;
+    border-color: #1d4ed8;
+    box-shadow: 0 2px 8px rgba(29, 78, 216, 0.15);
+}
+
+.device-detail-trigger:focus {
+    outline: 2px solid #1d4ed8;
+    outline-offset: 2px;
+}
+
+.device-detail-trigger:active {
+    transform: scale(0.98);
+    background: #d0dce8;
+}
+
+.device-tooltip {
+    position: absolute;
+    background: #111827;
+    color: #fff;
+    padding: 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    z-index: 1000;
+    max-width: 380px;
+    max-height: 400px;
+    overflow-y: auto;
+    box-shadow: 0 12px 26px rgba(15, 23, 42, 0.24);
+    pointer-events: none;
+    border: 1px solid #374151;
+}
+
+.device-tooltip-item {
+    display: flex;
+    gap: 12px;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #374151;
+    align-items: flex-start;
+}
+
+.device-tooltip-item:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.device-tooltip-label {
+    color: #60a5fa;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.device-tooltip-value {
+    word-break: break-word;
+    text-align: right;
+    color: #e5e7eb;
+}
+
+tr:hover {
+    background: #f9f9f9;
+}
+
+.badge {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.badge-success {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.badge-info {
+    background: #e3f2fd;
+    color: #1565c0;
+}
+
+.badge-warning {
+    background: #fff3e0;
+    color: #e65100;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: #999;
+}
+
+.empty-state-icon {
+    font-size: 48px;
+    margin-bottom: 10px;
+}
+
+.chart-btn {
+    background: #f0f0f0;
+    border: none;
+    padding: 8px 16px;
+    margin: 0 5px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+
+.chart-btn:hover {
+    background: #e0e0e0;
+    transform: translateY(-2px);
+}
+
+.chart-btn.active {
+    background: #667eea;
+    color: white;
+}
+
+.chart-btn.active:hover {
+    background: #5a6fd8;
+}
+
+@media (max-width: 768px) {
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .chart-container {
+        height: 300px;
+    }
+}
+</style>
+CSS;
+
+renderAppShellStart($conn, [
+    "title" => "Attendance Report",
+    "active" => "report",
+    "page_title" => "Attendance Report",
+    "page_subtitle" => "View your events attendance statistics and analytics",
+    "extra_head" => $pageCss,
+]);
+?>
+
+<!-- Event Selection -->
+<div class="stats-grid">
+    <div class="stat-card" style="grid-column: span 3;">
+        <h3>Select Event</h3>
+        <select id="eventSelector" onchange="window.location.href='report.php?event_id=' + this.value" style="width: 100%; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 14px;">
+            <option value="0">All Events</option>
+            <?php foreach ($attendanceStats as $stat): ?>
+                <option value="<?php echo $stat['event_id']; ?>" <?php echo $selectedEventId == $stat['event_id'] ? 'selected' : ''; ?>>
+                    <?php echo h($stat['event_name'] . ' (' . date('M j, Y', strtotime($stat['event_date'])) . ')'); ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+    </div>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <h3>Students Attended</h3>
+        <div class="number"><?php echo (int) $attendeeTypeAttendanceStats['student']; ?></div>
+    </div>
+    <div class="stat-card">
+        <h3>Staff Attended</h3>
+        <div class="number"><?php echo (int) $attendeeTypeAttendanceStats['staff']; ?></div>
+    </div>
+    <div class="stat-card">
+        <h3>Guests Attended</h3>
+        <div class="number"><?php echo (int) $attendeeTypeAttendanceStats['guest']; ?></div>
+    </div>
+    <?php if ($attendeeTypeAttendanceStats['unknown'] > 0): ?>
+        <div class="stat-card">
+            <h3>Unknown Type</h3>
+            <div class="number"><?php echo (int) $attendeeTypeAttendanceStats['unknown']; ?></div>
+        </div>
+    <?php endif; ?>
+</div>
+
+<div class="stats-grid">
+    <?php if ($selectedEvent && $selectedEventId > 0): ?>
+        <!-- Selected Event Statistics -->
+        <?php 
+        $eventAttendance = $conn->query("SELECT COUNT(*) as count FROM attendance WHERE event_id=$selectedEventId")->fetch_assoc();
+        $eventAttendees = (int)$eventAttendance['count'];
+        ?>
+        <div class="stat-card">
+            <h3>Selected Event</h3>
+            <div class="number" style="font-size: 16px; font-weight: normal;"><?php echo h($selectedEvent['name']); ?></div>
+        </div>
+        <div class="stat-card">
+            <h3>Event Attendees</h3>
+            <div class="number"><?php echo $eventAttendees; ?></div>
+        </div>
+        <div class="stat-card">
+            <h3>Event Date</h3>
+            <div class="number" style="font-size: 16px; font-weight: normal;"><?php echo date('M j, Y', strtotime($selectedEvent['date'])); ?></div>
+        </div>
+    <?php else: ?>
+        <!-- Overall Statistics -->
+        <div class="stat-card">
+            <h3>Total Events Created</h3>
+            <div class="number"><?php echo $totalEvents; ?></div>
+        </div>
+        <div class="stat-card">
+            <h3>Total Attendance</h3>
+            <div class="number"><?php echo $totalAttendance; ?></div>
+        </div>
+        <div class="stat-card">
+            <h3>Average Attendance</h3>
+            <div class="number"><?php echo $totalEvents > 0 ? round($totalAttendance / $totalEvents) : 0; ?></div>
+        </div>
+    <?php endif; ?>
+</div>
+
+<?php if (count($attendanceStats) > 0): ?>
+
+<!-- Graph Type Toggle -->
+<div style="margin-bottom: 20px; text-align: center;">
+    <button onclick="switchAttendanceChart('doughnut')" class="chart-btn active" data-chart="doughnut">🍩 Doughnut</button>
+    <button onclick="switchAttendanceChart('bar')" class="chart-btn" data-chart="bar">📊 Bar</button>
+    <button onclick="switchAttendanceChart('line')" class="chart-btn" data-chart="line">📈 Line</button>
+</div>
+
+<div class="chart-container">
+    <div class="chart-title"><?php echo ($selectedEvent && $selectedEventId > 0) ? '📊 ' . h($selectedEvent['name']) . ' Attendance' : '📊 Event Attendance Overview'; ?></div>
+    <canvas id="attendanceChart"></canvas>
+</div>
+
+<?php endif; ?>
+
+<?php if (count($browserStats) > 0): ?>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px;">
+
+<div class="chart-container">
+    <div class="chart-title">🌐 Browsers Used</div>
+    <canvas id="browserChart"></canvas>
+</div>
+
+<div class="chart-container">
+    <div class="chart-title">💻 Operating Systems</div>
+    <canvas id="osChart"></canvas>
+</div>
+
+</div>
+
+<div class="chart-container">
+    <div class="chart-title">📱 Device Types</div>
+    <canvas id="deviceTypeChart"></canvas>
+</div>
+
+<?php endif; ?>
+
+<?php if ($detailedRecords && $detailedRecords->num_rows > 0): ?>
+
+<div class="table-container">
+    <div class="chart-title"><?php echo ($selectedEvent && $selectedEventId > 0) ? '📋 ' . h($selectedEvent['name']) . ' Attendance Records' : '📋 Recent Attendance Records'; ?></div>
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Attendee Type</th>
+                <th>Type Info</th>
+                <th>Status</th>
+                <th>Distance</th>
+                <th>Device Info</th>
+                <th>Location</th>
+                <th>Check-in Time</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php while ($record = $detailedRecords->fetch_assoc()): ?>
+                <?php 
+                $deviceInfo = [];
+                if (!empty($record['device_info'])) {
+                    $deviceInfo = json_decode($record['device_info'], true);
+                }
+                $browserInfo = [];
+                if (!empty($record['browser_info'])) {
+                    $browserInfo = json_decode($record['browser_info'], true);
+                }
+                $attendeeType = $record['attendee_type'] ?: 'unknown';
+                $typeInfo = 'N/A';
+                if ($attendeeType === 'student') {
+                    $typeInfo = $record['reg_no'] ? 'Reg No: ' . $record['reg_no'] : 'Reg No: Not set';
+                } elseif ($attendeeType === 'staff') {
+                    $typeInfo = $record['department'] ? 'Department: ' . $record['department'] : 'Department: Not set';
+                } elseif ($attendeeType === 'guest') {
+                    $typeInfo = 'Guest';
+                }
+                
+                // Generate unique ID for this row's device details
+                $rowId = 'device_' . $record['id'] . '_' . bin2hex(random_bytes(4));
+                
+                // Comprehensive device details including IP and all parsed info
+                $deviceDetails = [
+                    '📱 IP Address' => $record['scan_ip'] ?: 'Not captured',
+                    '🌐 Browser' => $deviceInfo['browser'] ?? ($browserInfo['name'] ?? 'Unknown'),
+                    '💻 OS' => $deviceInfo['os_name'] ?? ($browserInfo['platform'] ?? 'Unknown'),
+                    '📦 Device Type' => $deviceInfo['device_type'] ?? 'Unknown',
+                    '📺 Screen' => $deviceInfo['screen_resolution'] ?? 'Unknown',
+                    '🎨 DPI' => $deviceInfo['screen_dpi'] ?? 'N/A',
+                    '💾 Memory' => $deviceInfo['device_memory'] ?? 'Unknown',
+                    '⚙️ CPU Cores' => $deviceInfo['cpu_cores'] ?? 'Unknown',
+                    '📡 Connection' => $deviceInfo['connection_type'] ?? 'Unknown',
+                    '🗣️ Language' => $deviceInfo['language'] ?? 'Unknown',
+                    '🕐 Timezone' => $deviceInfo['timezone'] ?? 'Unknown',
+                    '📍 Location' => $record['scan_address'] ?: 'Not captured'
+                ];
+                
+                // Status badge color
+                $statusClass = 'badge-info';
+                if ($record['attendance_status'] === 'present') $statusClass = 'badge-success';
+                elseif ($record['attendance_status'] === 'late') $statusClass = 'badge-warning';
+                elseif ($record['attendance_status'] === 'absent') $statusClass = 'badge-warning';
+                ?>
+                <tr>
+                    <td><?php echo h($record['user_name']); ?></td>
+                    <td><?php echo h($record['user_email']); ?></td>
+                    <td><?php echo h($record['user_phone']); ?></td>
+                    <td><?php echo h(ucfirst($attendeeType)); ?></td>
+                    <td><?php echo h($typeInfo); ?></td>
+                    <td>
+                        <span class="badge <?php echo $statusClass; ?>">
+                            <?php echo ucfirst(h($record['attendance_status'] ?? 'present')); ?>
+                            <?php if ($record['phone_matched']): ?> ✅<?php endif; ?>
+                        </span>
+                    </td>
+                    <td>
+                        <?php if ($record['distance_from_venue']): ?>
+                            <?php echo number_format($record['distance_from_venue'], 2); ?> km
+                        <?php else: ?>
+                            N/A
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <span class="device-detail-trigger"
+                              id="<?php echo $rowId; ?>"
+                              onclick="toggleDeviceTooltip(this, '<?php echo $rowId; ?>')"
+                              onmouseover="showDeviceTooltip(this, '<?php echo $rowId; ?>')"
+                              onmouseout="hideDeviceTooltip()"
+                              role="button"
+                              tabindex="0">
+                            ℹ️ <?php echo h(($deviceInfo['device_type'] ?? 'Unknown') . ' • ' . ($deviceInfo['browser'] ?? ($browserInfo['name'] ?? 'Unknown'))); ?>
+                        </span>
+                    </td>
+                    <td><?php echo h($record['scan_address'] ?: 'Not captured'); ?></td>
+                    <td>
+                        <?php echo h(date('M j, Y H:i', strtotime($record['time']))); ?>
+                        <?php if (!empty($record['check_in_time'])): ?>
+                            <br><small><?php echo h($record['check_in_time']); ?></small>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <?php if (!empty($record['notes'])): ?>
+                <tr>
+                    <td colspan="10" style="background: #f9f9f9; padding: 8px;">
+                        <small><strong>Notes:</strong> <?php echo h($record['notes']); ?></small>
+                    </td>
+                </tr>
+                <?php endif; ?>
+                <script>
+                    deviceDetailsMap = deviceDetailsMap || {};
+                    deviceDetailsMap['<?php echo $rowId; ?>'] = <?php echo json_encode($deviceDetails); ?>;
+                </script>
+            <?php endwhile; ?>
+        </tbody>
+    </table>
+</div>
+
+<?php else: ?>
+
+<div class="table-container">
+    <div class="empty-state">
+        <div class="empty-state-icon">📊</div>
+        <p>No attendance records yet. Create an event and start scanning QR codes!</p>
+    </div>
+</div>
+
+<?php endif; ?>
+
+<script>
+// Attendance Chart
+<?php if (count($attendanceStats) > 0): ?>
+let attendanceChart;
+const attendanceCtx = document.getElementById('attendanceChart').getContext('2d');
+
+<?php if ($selectedEvent && $selectedEventId > 0): ?>
+// Selected Event Data
+const attendanceData = {
+    labels: ['<?php echo h($selectedEvent['name']); ?>'],
+    datasets: [{
+        label: 'Attendance Count',
+        data: [<?php echo $conn->query("SELECT COUNT(*) as count FROM attendance WHERE event_id=$selectedEventId")->fetch_assoc()['count']; ?>],
+        backgroundColor: ['#667eea'],
+        borderColor: ['#667eea'],
+        borderWidth: 2,
+        borderRadius: 8,
+        borderSkipped: false,
+    }]
+};
+<?php else: ?>
+// All Events Data
+const attendanceData = {
+    labels: <?php echo json_encode(array_map(function($s) { return $s['event_name']; }, $attendanceStats)); ?>,
+    datasets: [{
+        label: 'Attendance Count',
+        data: <?php echo json_encode(array_map(function($s) { return $s['attendance_count']; }, $attendanceStats)); ?>,
+        backgroundColor: [
+            '#667eea',
+            '#764ba2',
+            '#f093fb',
+            '#4facfe',
+            '#00f2fe',
+            '#43e97b',
+            '#fa709a',
+        ],
+        borderColor: [
+            '#667eea',
+            '#764ba2',
+            '#f093fb',
+            '#4facfe',
+            '#00f2fe',
+            '#43e97b',
+            '#fa709a',
+        ],
+        borderWidth: 2,
+        borderRadius: 8,
+        borderSkipped: false,
+    }]
+};
+<?php endif; ?>
+
+// Initialize with doughnut chart
+attendanceChart = new Chart(attendanceCtx, {
+    type: 'doughnut',
+    data: attendanceData,
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: false
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    stepSize: 1
+                }
+            }
+        }
+    }
+});
+
+// Chart switching function
+function switchAttendanceChart(type) {
+    // Update button states
+    document.querySelectorAll('.chart-btn').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    document.querySelector(`[data-chart="${type}"]`).classList.add('active');
+    
+    // Destroy existing chart
+    if (attendanceChart) {
+        attendanceChart.destroy();
+    }
+    
+    // Create new chart with selected type
+    const chartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: type === 'doughnut' ? false : true,
+                position: type === 'doughnut' ? 'bottom' : 'top'
+            }
+        }
+    };
+    
+    // Add scales for bar and line charts
+    if (type === 'bar' || type === 'line') {
+        chartOptions.scales = {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    stepSize: 1
+                }
+            }
+        };
+    }
+    
+    // Add line-specific options
+    if (type === 'line') {
+        attendanceData.datasets[0].fill = true;
+        attendanceData.datasets[0].tension = 0.4;
+        attendanceData.datasets[0].backgroundColor = 'rgba(102, 126, 234, 0.2)';
+        attendanceData.datasets[0].borderColor = '#667eea';
+        attendanceData.datasets[0].pointBackgroundColor = '#667eea';
+        attendanceData.datasets[0].pointBorderColor = '#fff';
+        attendanceData.datasets[0].pointBorderWidth = 2;
+        attendanceData.datasets[0].pointRadius = 6;
+    }
+    
+    attendanceChart = new Chart(attendanceCtx, {
+        type: type,
+        data: attendanceData,
+        options: chartOptions
+    });
+}
+<?php endif; ?>
+
+// Browser Chart
+<?php if (count($browserStats) > 0): ?>
+const browserCtx = document.getElementById('browserChart').getContext('2d');
+const browserChart = new Chart(browserCtx, {
+    type: 'doughnut',
+    data: {
+        labels: <?php echo json_encode(array_keys($browserStats)); ?>,
+        datasets: [{
+            data: <?php echo json_encode(array_values($browserStats)); ?>,
+            backgroundColor: [
+                '#667eea',
+                '#764ba2',
+                '#f093fb',
+                '#4facfe',
+                '#00f2fe',
+                '#43e97b',
+            ]
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'bottom'
+            }
+        }
+    }
+});
+<?php endif; ?>
+
+// OS Chart
+<?php if (count($osStats) > 0): ?>
+const osCtx = document.getElementById('osChart').getContext('2d');
+const osChart = new Chart(osCtx, {
+    type: 'doughnut',
+    data: {
+        labels: <?php echo json_encode(array_keys($osStats)); ?>,
+        datasets: [{
+            data: <?php echo json_encode(array_values($osStats)); ?>,
+            backgroundColor: [
+                '#667eea',
+                '#764ba2',
+                '#f093fb',
+                '#4facfe',
+                '#00f2fe',
+                '#43e97b',
+            ]
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                position: 'bottom'
+            }
+        }
+    }
+});
+<?php endif; ?>
+
+// Device Type Chart
+<?php if (count($deviceTypeStats) > 0): ?>
+const deviceTypeCtx = document.getElementById('deviceTypeChart').getContext('2d');
+const deviceTypeChart = new Chart(deviceTypeCtx, {
+    type: 'bar',
+    data: {
+        labels: <?php echo json_encode(array_keys($deviceTypeStats)); ?>,
+        datasets: [{
+            label: 'Device Count',
+            data: <?php echo json_encode(array_values($deviceTypeStats)); ?>,
+            backgroundColor: [
+                '#667eea',
+                '#764ba2',
+                '#f093fb',
+            ],
+            borderRadius: 8,
+            borderSkipped: false,
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: false
+            }
+        },
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    stepSize: 1
+                }
+            }
+        }
+    }
+});
+<?php endif; ?>
+function escapeHtml(text) {
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+let deviceDetailsMap = {};
+
+function showDeviceTooltip(element, rowId) {
+    const details = deviceDetailsMap[rowId];
+    if (!details) {
+        console.warn('No device details found for ID:', rowId);
+        return;
+    }
+    
+    let tooltip = document.getElementById("reportDeviceTooltip");
+    if (!tooltip) {
+        tooltip = document.createElement("div");
+        tooltip.id = "reportDeviceTooltip";
+        tooltip.className = "device-tooltip";
+        document.body.appendChild(tooltip);
+    }
+
+    tooltip.innerHTML = Object.entries(details).map(function(entry) {
+        return '<div class="device-tooltip-item"><span class="device-tooltip-label">' + 
+               escapeHtml(String(entry[0])) + 
+               ':</span><span class="device-tooltip-value">' + 
+               escapeHtml(String(entry[1])) + 
+               '</span></div>';
+    }).join("");
+    
+    tooltip.style.display = "block";
+    const rect = element.getBoundingClientRect();
+    tooltip.style.left = (rect.left + window.scrollX) + "px";
+    tooltip.style.top = (rect.bottom + window.scrollY + 8) + "px";
+}
+
+function hideDeviceTooltip() {
+    const tooltip = document.getElementById("reportDeviceTooltip");
+    if (tooltip) {
+        tooltip.style.display = "none";
+    }
+}
+
+function toggleDeviceTooltip(element, rowId) {
+    const tooltip = document.getElementById("reportDeviceTooltip");
+    if (tooltip && tooltip.style.display === "block") {
+        tooltip.style.display = "none";
+    } else {
+        showDeviceTooltip(element, rowId);
+    }
+}
+
+function showReportDeviceTooltip(event, details) {
+    let tooltip = document.getElementById("reportDeviceTooltip");
+    if (!tooltip) {
+        tooltip = document.createElement("div");
+        tooltip.id = "reportDeviceTooltip";
+        tooltip.className = "device-tooltip";
+        document.body.appendChild(tooltip);
+    }
+
+    tooltip.innerHTML = Object.entries(details).map(function(entry) {
+        return '<div class="device-tooltip-item"><span class="device-tooltip-label">' + 
+               escapeHtml(String(entry[0])) + 
+               ':</span><span class="device-tooltip-value">' + 
+               escapeHtml(String(entry[1])) + 
+               '</span></div>';
+    }).join("");
+    tooltip.style.display = "block";
+    tooltip.style.left = (event.pageX + 10) + "px";
+    tooltip.style.top = (event.pageY + 10) + "px";
+}
+
+function hideReportDeviceTooltip() {
+    const tooltip = document.getElementById("reportDeviceTooltip");
+    if (tooltip) {
+        tooltip.style.display = "none";
+    }
+}
+
+// Initialize keyboard support for device info triggers
+document.addEventListener('DOMContentLoaded', function() {
+    const triggers = document.querySelectorAll('.device-detail-trigger');
+    triggers.forEach(function(trigger) {
+        trigger.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                const rowId = this.id;
+                toggleDeviceTooltip(this, rowId);
+            }
+        });
+    });
+});
+</script>
+
+<?php renderAppShellEnd("report"); ?>

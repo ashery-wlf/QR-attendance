@@ -1,0 +1,41 @@
+.google-map-canvas,
+.venue-map,
+.inline-map .google-map-canvas,
+#adminEventMap,
+#eventLocationMap {
+    width: 100%;
+    min-height: 260px;
+    height: 260px;
+    border: 1px solid #dbe4f0;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #f1f5f9;
+}
+
+.map-panel #eventLocationMap {
+    min-height: 320px;
+    height: 320px;
+    border: 0;
+    border-radius: 0;
+}
+
+.inline-map #adminEventMap {
+    min-height: 220px;
+    height: 220px;
+}
+
+.google-maps-warning {
+    margin-top: 12px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.pac-container {
+    z-index: 10000 !important;
+}
