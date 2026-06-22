@@ -9,18 +9,18 @@ appRequireRole(['organization_admin', 'event_organizer']);
 $user_id = (int) $_SESSION['user_id'];
 $user_role = $_SESSION['user_role'] ?? 'event_organizer';
 $user_org_id = isset($_SESSION['organization_id']) ? (int) $_SESSION['organization_id'] : 0;
+$eventAccessCondition = $user_role === 'organization_admin'
+    ? "organization_id=$user_org_id"
+    : "created_by=$user_id";
+$eventAccessConditionWithAlias = $user_role === 'organization_admin'
+    ? "e.organization_id=$user_org_id"
+    : "e.created_by=$user_id";
 
 // Get selected event ID from URL or POST
 $selectedEventId = isset($_GET['event_id']) ? (int)$_GET['event_id'] : 0;
 
-// Get user's events based on role
-if ($user_role === 'organization_admin') {
-    // Org Admin: see all org events
-    $userEvents = $conn->query("SELECT * FROM events WHERE organization_id=$user_org_id AND deleted = FALSE ORDER BY date DESC");
-} else {
-    // Event Organizer: own events + org events
-    $userEvents = $conn->query("SELECT * FROM events WHERE (created_by=$user_id OR organization_id=$user_org_id) AND deleted = FALSE ORDER BY date DESC");
-}
+// Attendance reports are limited by role.
+$userEvents = $conn->query("SELECT * FROM events WHERE $eventAccessCondition AND deleted = FALSE ORDER BY date DESC");
 
 // Get attendance statistics for user's events
 $attendanceStats = [];
@@ -53,23 +53,169 @@ if ($selectedEventId > 0) {
     $selectedEventData = $conn->query($eventQuery)->fetch_assoc();
     
     if ($selectedEventData) {
-        // Check if user has access to this event
-        $hasAccess = false;
-        if ($user_role === 'organization_admin') {
-            $hasAccess = ((int) $selectedEventData['organization_id'] === $user_org_id);
-        } else {
-            $hasAccess = ((int) $selectedEventData['created_by'] === $user_id) || ((int) $selectedEventData['organization_id'] === $user_org_id);
-        }
-        
-        if ($hasAccess) {
+        $canAccessSelectedEvent = $user_role === 'organization_admin'
+            ? (int) $selectedEventData['organization_id'] === $user_org_id
+            : (int) $selectedEventData['created_by'] === $user_id;
+
+        if ($canAccessSelectedEvent) {
             $selectedEvent = $selectedEventData;
+        } else {
+            $selectedEventId = 0;
         }
+    } else {
+        $selectedEventId = 0;
     }
+}
+
+function reportExcelText($value)
+{
+    $value = trim((string) $value);
+    if ($value !== '' && preg_match('/^[=+\-@]/', $value)) {
+        $value = "'" . $value;
+    }
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
+
+function reportExportFilename($eventName, $reportDate, $attendeeType)
+{
+    $base = preg_replace('/[^A-Za-z0-9_-]+/', '_', strtolower((string) $eventName));
+    $base = trim($base, '_');
+    if ($base === '') {
+        $base = 'attendance_report';
+    }
+
+    $datePart = $reportDate !== '' ? $reportDate : 'all_dates';
+    $typePart = $attendeeType !== 'all' ? $attendeeType : 'all_attendees';
+    return $base . '_' . $datePart . '_' . $typePart . '.xls';
+}
+
+if (isset($_GET['export']) && $_GET['export'] === 'excel') {
+    $exportEventId = (int) ($_GET['event_id'] ?? 0);
+    $exportDate = trim($_GET['report_date'] ?? '');
+    $exportAttendeeType = trim($_GET['attendee_type'] ?? 'all');
+    $allowedExportTypes = ['all', 'student', 'staff', 'guest'];
+
+    if (!in_array($exportAttendeeType, $allowedExportTypes, true)) {
+        $exportAttendeeType = 'all';
+    }
+    if ($exportDate !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $exportDate)) {
+        $exportDate = '';
+    }
+
+    if ($exportEventId <= 0) {
+        die('Select an event before downloading Excel report.');
+    }
+
+    $exportEventResult = $conn->query("SELECT * FROM events e WHERE e.id=$exportEventId AND e.deleted = FALSE AND $eventAccessConditionWithAlias LIMIT 1");
+    $exportEvent = $exportEventResult && $exportEventResult->num_rows > 0 ? $exportEventResult->fetch_assoc() : null;
+    if (!$exportEvent) {
+        die('You do not have permission to export this event report.');
+    }
+
+    $conditions = ["a.event_id=$exportEventId"];
+    if ($exportDate !== '') {
+        $safeExportDate = $conn->real_escape_string($exportDate);
+        $conditions[] = "DATE(a.time)='$safeExportDate'";
+    }
+    if ($exportAttendeeType !== 'all') {
+        $safeExportType = $conn->real_escape_string($exportAttendeeType);
+        $conditions[] = "u.attendee_type='$safeExportType'";
+    }
+
+    $exportRecords = $conn->query("
+        SELECT a.*, e.name AS event_name, e.date AS event_date,
+               u.attendee_type, u.reg_no, u.department
+        FROM attendance a
+        JOIN events e ON e.id = a.event_id
+        LEFT JOIN users u ON u.id = a.user_id
+        WHERE " . implode(' AND ', $conditions) . "
+        ORDER BY a.time ASC
+    ");
+
+    $filename = reportExportFilename($exportEvent['name'], $exportDate, $exportAttendeeType);
+    header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    echo "\xEF\xBB\xBF";
+    ?>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            table { border-collapse: collapse; font-family: Arial, sans-serif; font-size: 12px; }
+            th { background: #2563eb; color: #ffffff; font-weight: bold; }
+            th, td { border: 1px solid #cbd5e1; padding: 7px; vertical-align: top; }
+            .title { font-size: 18px; font-weight: bold; background: #e0f2fe; color: #0f172a; }
+            .meta { background: #f8fafc; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <table>
+            <tr><td colspan="16" class="title">Attendance Excel Report</td></tr>
+            <tr><td class="meta">Event</td><td colspan="15"><?php echo reportExcelText($exportEvent['name']); ?></td></tr>
+            <tr><td class="meta">Event Date</td><td colspan="15"><?php echo reportExcelText($exportEvent['date']); ?></td></tr>
+            <tr><td class="meta">Report Date</td><td colspan="15"><?php echo reportExcelText($exportDate !== '' ? $exportDate : 'All dates'); ?></td></tr>
+            <tr><td class="meta">Attendee Type</td><td colspan="15"><?php echo reportExcelText($exportAttendeeType === 'all' ? 'All attendees' : ucfirst($exportAttendeeType)); ?></td></tr>
+            <tr></tr>
+            <tr>
+                <th>No.</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Attendee Type</th>
+                <th>Reg No</th>
+                <th>Department</th>
+                <th>Status</th>
+                <th>Check-in Date</th>
+                <th>Check-in Time</th>
+                <th>Distance From Venue</th>
+                <th>Location</th>
+                <th>IP Address</th>
+                <th>Device</th>
+                <th>Browser</th>
+                <th>Verification</th>
+            </tr>
+            <?php
+            $rowNo = 1;
+            if ($exportRecords && $exportRecords->num_rows > 0):
+                while ($row = $exportRecords->fetch_assoc()):
+                    $deviceInfo = !empty($row['device_info']) ? json_decode($row['device_info'], true) : [];
+                    $browserInfo = !empty($row['browser_info']) ? json_decode($row['browser_info'], true) : [];
+                    $attendeeType = $row['attendee_type'] ?: 'unknown';
+                    $checkInTimestamp = strtotime($row['time']);
+                    ?>
+                    <tr>
+                        <td><?php echo $rowNo++; ?></td>
+                        <td><?php echo reportExcelText($row['user_name']); ?></td>
+                        <td><?php echo reportExcelText($row['user_email']); ?></td>
+                        <td><?php echo reportExcelText($row['user_phone']); ?></td>
+                        <td><?php echo reportExcelText(ucfirst($attendeeType)); ?></td>
+                        <td><?php echo reportExcelText($row['reg_no']); ?></td>
+                        <td><?php echo reportExcelText($row['department']); ?></td>
+                        <td><?php echo reportExcelText(ucfirst($row['attendance_status'] ?? 'present')); ?></td>
+                        <td><?php echo reportExcelText($checkInTimestamp ? date('Y-m-d', $checkInTimestamp) : ''); ?></td>
+                        <td><?php echo reportExcelText($checkInTimestamp ? date('H:i:s', $checkInTimestamp) : ''); ?></td>
+                        <td><?php echo reportExcelText($row['distance_from_venue'] !== null ? number_format((float) $row['distance_from_venue'], 2) . ' km' : ''); ?></td>
+                        <td><?php echo reportExcelText($row['scan_address']); ?></td>
+                        <td><?php echo reportExcelText($row['scan_ip']); ?></td>
+                        <td><?php echo reportExcelText($deviceInfo['device_type'] ?? 'Unknown'); ?></td>
+                        <td><?php echo reportExcelText($deviceInfo['browser'] ?? ($browserInfo['name'] ?? 'Unknown')); ?></td>
+                        <td><?php echo reportExcelText($row['verification_method']); ?></td>
+                    </tr>
+                <?php endwhile;
+            else: ?>
+                <tr><td colspan="16">No attendance records found for the selected filters.</td></tr>
+            <?php endif; ?>
+        </table>
+    </body>
+    </html>
+    <?php
+    exit();
 }
 
 // Get device information for selected event or all events
 $deviceStats = [];
-$whereClause = $selectedEventId > 0 ? "WHERE event_id=$selectedEventId" : "WHERE event_id IN (SELECT id FROM events WHERE created_by=$user_id)";
+$whereClause = $selectedEventId > 0 ? "WHERE event_id=$selectedEventId" : "WHERE event_id IN (SELECT id FROM events WHERE $eventAccessCondition)";
 $deviceResult = $conn->query("
     SELECT device_info, COUNT(*) as count 
     FROM attendance 
@@ -125,7 +271,7 @@ foreach ($deviceStats as $stat) {
 }
 
 // Get detailed attendance records
-$whereClause = $selectedEventId > 0 ? "WHERE e.created_by=$user_id AND e.id=$selectedEventId" : "WHERE e.created_by=$user_id";
+$whereClause = $selectedEventId > 0 ? "WHERE $eventAccessConditionWithAlias AND e.id=$selectedEventId" : "WHERE $eventAccessConditionWithAlias";
 $detailedRecords = $conn->query("
     SELECT a.*, e.name as event_name, e.target_audience,
            u.attendee_type, u.reg_no, u.department
@@ -137,7 +283,7 @@ $detailedRecords = $conn->query("
     LIMIT 100
 ");
 
-$typeWhereClause = $selectedEventId > 0 ? "WHERE e.created_by=$user_id AND e.id=$selectedEventId" : "WHERE e.created_by=$user_id";
+$typeWhereClause = $selectedEventId > 0 ? "WHERE $eventAccessConditionWithAlias AND e.id=$selectedEventId" : "WHERE $eventAccessConditionWithAlias";
 $attendeeTypeAttendanceStats = ['student' => 0, 'staff' => 0, 'guest' => 0, 'unknown' => 0];
 $typeStatsResult = $conn->query("
     SELECT COALESCE(u.attendee_type, 'unknown') AS attendee_type, COUNT(*) AS total
@@ -368,6 +514,62 @@ tr:hover {
     background: #5a6fd8;
 }
 
+.excel-export-card {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    border-left: 4px solid #16a34a;
+}
+
+.excel-export-card h3 {
+    margin: 0 0 14px 0;
+    color: #166534;
+    font-size: 15px;
+    text-transform: uppercase;
+}
+
+.excel-export-form {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.5fr) minmax(160px, 1fr) minmax(160px, 1fr) auto;
+    gap: 12px;
+    align-items: end;
+}
+
+.excel-export-form label {
+    display: grid;
+    gap: 6px;
+    color: #334155;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.excel-export-form select,
+.excel-export-form input {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.excel-download-btn {
+    min-height: 42px;
+    border: none;
+    border-radius: 8px;
+    padding: 0 18px;
+    background: #16a34a;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.excel-download-btn:hover {
+    background: #15803d;
+}
+
 @media (max-width: 768px) {
     .stats-grid {
         grid-template-columns: 1fr;
@@ -375,6 +577,10 @@ tr:hover {
     
     .chart-container {
         height: 300px;
+    }
+
+    .excel-export-form {
+        grid-template-columns: 1fr;
     }
 }
 </style>
@@ -404,6 +610,39 @@ renderAppShellStart($conn, [
     </div>
 </div>
 
+<div class="excel-export-card">
+    <h3>Download Excel Attendance Report</h3>
+    <form method="GET" action="report.php" class="excel-export-form">
+        <input type="hidden" name="export" value="excel">
+        <label>
+            Event
+            <select name="event_id" required>
+                <option value="">Select event</option>
+                <?php foreach ($attendanceStats as $stat): ?>
+                    <option value="<?php echo (int) $stat['event_id']; ?>" <?php echo $selectedEventId == (int) $stat['event_id'] ? 'selected' : ''; ?>>
+                        <?php echo h($stat['event_name'] . ' (' . date('M j, Y', strtotime($stat['event_date'])) . ')'); ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </label>
+        <label>
+            Report Date
+            <input type="date" name="report_date" value="<?php echo h($_GET['report_date'] ?? ''); ?>">
+        </label>
+        <label>
+            Attendee Type
+            <select name="attendee_type">
+                <?php $selectedType = $_GET['attendee_type'] ?? 'all'; ?>
+                <option value="all" <?php echo $selectedType === 'all' ? 'selected' : ''; ?>>All attendees</option>
+                <option value="student" <?php echo $selectedType === 'student' ? 'selected' : ''; ?>>Students only</option>
+                <option value="staff" <?php echo $selectedType === 'staff' ? 'selected' : ''; ?>>Staff only</option>
+                <option value="guest" <?php echo $selectedType === 'guest' ? 'selected' : ''; ?>>Guests only</option>
+            </select>
+        </label>
+        <button type="submit" class="excel-download-btn">Download Excel</button>
+    </form>
+</div>
+
 <div class="stats-grid">
     <div class="stat-card">
         <h3>Students Attended</h3>
@@ -417,19 +656,18 @@ renderAppShellStart($conn, [
         <h3>Guests Attended</h3>
         <div class="number"><?php echo (int) $attendeeTypeAttendanceStats['guest']; ?></div>
     </div>
-    <?php if ($attendeeTypeAttendanceStats['unknown'] > 0): ?>
-        <div class="stat-card">
-            <h3>Unknown Type</h3>
-            <div class="number"><?php echo (int) $attendeeTypeAttendanceStats['unknown']; ?></div>
-        </div>
-    <?php endif; ?>
 </div>
 
 <div class="stats-grid">
     <?php if ($selectedEvent && $selectedEventId > 0): ?>
         <!-- Selected Event Statistics -->
         <?php 
-        $eventAttendance = $conn->query("SELECT COUNT(*) as count FROM attendance WHERE event_id=$selectedEventId")->fetch_assoc();
+        $eventAttendance = $conn->query("
+            SELECT COUNT(*) as count
+            FROM attendance a
+            JOIN events e ON e.id = a.event_id
+            WHERE a.event_id=$selectedEventId AND $eventAccessConditionWithAlias
+        ")->fetch_assoc();
         $eventAttendees = (int)$eventAttendance['count'];
         ?>
         <div class="stat-card">
@@ -642,7 +880,7 @@ const attendanceData = {
     labels: ['<?php echo h($selectedEvent['name']); ?>'],
     datasets: [{
         label: 'Attendance Count',
-        data: [<?php echo $conn->query("SELECT COUNT(*) as count FROM attendance WHERE event_id=$selectedEventId")->fetch_assoc()['count']; ?>],
+        data: [<?php echo (int) ($eventAttendees ?? 0); ?>],
         backgroundColor: ['#667eea'],
         borderColor: ['#667eea'],
         borderWidth: 2,

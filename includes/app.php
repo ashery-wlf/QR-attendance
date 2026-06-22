@@ -125,6 +125,8 @@ function ensureOrganizationSchema($conn)
         "is_active" => "ALTER TABLE organizations ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1",
         "created_by" => "ALTER TABLE organizations ADD COLUMN created_by INT NULL",
         "updated_at" => "ALTER TABLE organizations ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+        "brand_color" => "ALTER TABLE organizations ADD COLUMN brand_color VARCHAR(7) NULL DEFAULT '#2563ff'",
+        "background_color" => "ALTER TABLE organizations ADD COLUMN background_color VARCHAR(7) NULL DEFAULT '#ffffff'",
     ];
 
     foreach ($additions as $name => $sql) {
@@ -140,6 +142,51 @@ function ensureOrganizationSchema($conn)
     }
 
     $done = true;
+}
+
+/**
+ * Get organization branding settings
+ * @param object $conn Database connection
+ * @param int $org_id Organization ID
+ * @return array Organization branding settings
+ */
+function appGetOrganizationBranding($conn, $org_id)
+{
+    $org_id = (int) $org_id;
+    
+    $branding = [
+        'logo' => 'logo.png',
+        'brand_color' => '#2563ff',
+        'background_color' => '#ffffff',
+        'name' => 'Organization',
+    ];
+    
+    $stmt = $conn->prepare("SELECT logo, brand_color, background_color, name FROM organizations WHERE id = ? LIMIT 1");
+    $stmt->bind_param("i", $org_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    if ($result && $result->num_rows > 0) {
+        $row = $result->fetch_assoc();
+        $branding['logo'] = $row['logo'] ?: 'logo.png';
+        $branding['brand_color'] = $row['brand_color'] ?: '#2563ff';
+        $branding['background_color'] = $row['background_color'] ?: '#ffffff';
+        $branding['name'] = $row['name'] ?: 'Organization';
+    }
+    
+    $stmt->close();
+    return $branding;
+}
+
+/**
+ * Get current organization branding
+ * @param object $conn Database connection
+ * @return array Current organization branding
+ */
+function appGetCurrentOrganizationBranding($conn)
+{
+    $org_id = appCurrentOrganizationId();
+    return appGetOrganizationBranding($conn, $org_id);
 }
 
 function ensureEventSchema($conn)
@@ -629,6 +676,18 @@ function appVerifyCsrf()
 {
     $token = $_POST['csrf_token'] ?? '';
     return is_string($token) && isset($_SESSION['csrf_token']) && hash_equals($_SESSION['csrf_token'], $token);
+}
+
+/**
+ * Generate CSRF token for forms
+ * @return string CSRF token
+ */
+function appGenerateCsrfToken()
+{
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
 }
 
 function appFormatDeviceInfo($deviceInfoJson, $scanIp = '')
@@ -1141,6 +1200,21 @@ function appEventTimeOrDefault($preferredTime, $defaultTime)
     return appTimeValue($defaultTime);
 }
 
+function appAutomaticAttendanceWindow($eventTime)
+{
+    $time = appTimeValue($eventTime);
+    $base = strtotime('2000-01-01 ' . $time);
+
+    if ($time === '' || $base === false) {
+        return ['', ''];
+    }
+
+    return [
+        date('H:i', $base - 600),
+        date('H:i', $base + 1200),
+    ];
+}
+
 function appEventScheduleError($date, $time, $endTime, $attendanceStart, $attendanceEnd, $allowPastStart = false)
 {
     $date = trim((string) $date);
@@ -1175,23 +1249,6 @@ function appEventScheduleError($date, $time, $endTime, $attendanceStart, $attend
         }
     }
 
-    $scanStartTime = $attendanceStart !== '' ? $attendanceStart : $time;
-    $scanEndTime = $attendanceEnd !== '' ? $attendanceEnd : ($endTime !== '' ? $endTime : $time);
-    $scanStart = strtotime($date . ' ' . $scanStartTime);
-    $scanEnd = strtotime($date . ' ' . $scanEndTime);
-
-    if ($scanStart === false || $scanEnd === false) {
-        return "Choose a valid attendance window.";
-    }
-
-    if (!$allowPastStart && $scanStart < $currentMinute) {
-        return "Attendance opening time cannot be in the past.";
-    }
-
-    if ($scanEnd <= $scanStart) {
-        return "Attendance closing time must be after attendance opening time.";
-    }
-
     return "";
 }
 
@@ -1208,31 +1265,20 @@ function eventEndDateTime($event)
 
 function attendanceStartDateTime($event)
 {
-    $start = !empty($event['attendance_start']) ? $event['attendance_start'] : $event['time'];
-    $dateTime = $event['date'] . ' ' . $start;
-    $timestamp = strtotime($dateTime);
-    
-    // If the timestamp is false (invalid date/time), use event time as fallback
-    if ($timestamp === false) {
-        $timestamp = strtotime($event['date'] . ' ' . $event['time']);
+    if (!$event || !isset($event['date']) || !isset($event['time'])) {
+        return false;
     }
-    
-    return $timestamp;
+    $eventStart = strtotime($event['date'] . ' ' . $event['time']);
+    return $eventStart === false ? false : $eventStart - 600;
 }
 
 function attendanceEndDateTime($event)
 {
-    $end = !empty($event['attendance_end']) ? $event['attendance_end'] : (!empty($event['end_time']) ? $event['end_time'] : $event['time']);
-    $dateTime = $event['date'] . ' ' . $end;
-    $timestamp = strtotime($dateTime);
-    
-    // If the timestamp is false (invalid date/time), use event end time as fallback
-    if ($timestamp === false) {
-        $endFallback = !empty($event['end_time']) ? $event['end_time'] : $event['time'];
-        $timestamp = strtotime($event['date'] . ' ' . $endFallback);
+    if (!$event || !isset($event['date']) || !isset($event['time'])) {
+        return false;
     }
-    
-    return $timestamp;
+    $eventStart = strtotime($event['date'] . ' ' . $event['time']);
+    return $eventStart === false ? false : $eventStart + 1200;
 }
 
 function attendanceWindowState($event)
@@ -1368,7 +1414,7 @@ function registerUserToEvent($conn, $userId, $eventId)
 function qrTimeslot($timestamp = null)
 {
     $timestamp = $timestamp ?? time();
-    return (int) floor($timestamp / 60);
+    return (int) floor($timestamp / 15);
 }
 
 function buildQrPayload($eventId, $timeslot = null)
@@ -1445,6 +1491,10 @@ function appIcon($name)
         "logout" => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5" /><path d="M15 12H3" /><path d="M11 4h7a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-7" /></svg>',
         "settings" => '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M12 1v6M12 17v6M4.22 4.22l4.24 4.24M15.54 15.54l4.24 4.24M1 12h6M17 12h6M4.22 19.78l4.24-4.24M15.54 8.46l4.24-4.24" /></svg>',
         "map-pin" => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C7.03 2 3 6.03 3 11c0 6 9 13 9 13s9-7 9-13c0-4.97-4.03-9-9-9zm0 11c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" /></svg>',
+        "palette" => '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="3" /><path d="M8.5 6.5C7 5 5 4 3 3M15.5 8.5c1.5-1.5 3.5-2.5 5.5-3.5M6.5 15.5c-1.5 1.5-2.5 3.5-3.5 5.5M17.5 6.5c1.5-1.5 2.5-3.5 3.5-5.5" /></svg>',
+        "chevron-left" => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>',
+        "chevron-right" => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>',
+        "chevron-down" => '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>',
     ];
 
     return $icons[$name] ?? "";
@@ -1516,6 +1566,23 @@ function renderAppShellStart($conn, $options = [])
 
     $userName = $_SESSION['user_name'] ?? 'Member';
     $userId = (int) ($_SESSION['user_id'] ?? 0);
+    $userRole = appCurrentUserRole();
+    $userOrgId = isset($_SESSION['organization_id']) ? (int) $_SESSION['organization_id'] : 0;
+    
+    // For non-super-admin users, use organization logo and name
+    $displayLogo = $systemLogo;
+    $displayName = $systemName;
+    
+    if ($userRole !== 'super_admin' && $userOrgId > 0) {
+        $orgBranding = appGetOrganizationBranding($conn, $userOrgId);
+        if (!empty($orgBranding['logo'])) {
+            $displayLogo = $orgBranding['logo'];
+        }
+        if (!empty($orgBranding['name'])) {
+            $displayName = $orgBranding['name'];
+        }
+    }
+
     appHandleProfileActions($conn, $userId);
     $role = appCurrentUserRole();
     $active = $options['active'] ?? '';
@@ -1573,6 +1640,7 @@ function renderAppShellStart($conn, $options = [])
 
     if ($role === 'super_admin') {
         $menuItems[] = ['system-settings.php', 'settings', 'settings', 'System Settings'];
+        $menuItems[] = ['organization-branding.php', 'branding', 'palette', 'Organization Branding'];
         $menuItems[] = ['organizations.php', 'organizations', 'organizations', 'Organizations'];
     } elseif ($role === 'organization_admin') {
         $menuItems[] = ['venues.php', 'venues', 'map-pin', 'Venues'];
@@ -1594,9 +1662,9 @@ function renderAppShellStart($conn, $options = [])
     $sidebarMenu = '';
     foreach ($menuItems as $item) {
         [$href, $key, $icon, $label] = $item;
-        $sidebarMenu .= '<a href="' . h($href) . '" class="app-menu-link ' . ($active === $key ? 'active' : '') . '">' . appIcon($icon) . '<span>' . h($label) . '</span></a>';
+        $sidebarMenu .= '<a href="' . h($href) . '" class="app-menu-link ' . ($active === $key ? 'active' : '') . '" title="' . h($label) . '" aria-label="' . h($label) . '">' . appIcon($icon) . '<span>' . h($label) . '</span></a>';
     }
-    $GLOBALS['app_mobile_menu_items'] = array_slice($menuItems, 0, 5);
+    $GLOBALS['app_mobile_menu_items'] = array_slice($menuItems, 0, 6);
 
     echo '<!DOCTYPE html>
 <html>
@@ -1632,10 +1700,71 @@ a{color:inherit;text-decoration:none;}
     bottom:0;
     z-index:30;
 }
-.app-sidebar.hidden{
-    width:0;
-    padding:18px 0;
-    box-shadow:none;
+.app-sidebar-toggle{
+    position:fixed;
+    top:24px;
+    left:232px;
+    z-index:45;
+    width:34px;
+    height:42px;
+    border:1px solid rgba(255,255,255,0.18);
+    border-radius:0 12px 12px 0;
+    background:#291e1e;
+    color:#fff;
+    display:grid;
+    place-items:center;
+    cursor:pointer;
+    box-shadow:8px 10px 22px rgba(37, 9, 9, 0.18);
+    transition:left 0.25s ease, background 0.2s ease;
+}
+.app-sidebar-toggle:hover{background:#352525;}
+.app-sidebar-toggle svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;}
+.app-sidebar-toggle .icon-open{display:none;}
+.app-sidebar-collapsed .app-sidebar{
+    width:76px;
+    padding:18px 10px;
+}
+.app-sidebar-collapsed .app-sidebar-toggle{left:60px;}
+.app-sidebar-collapsed .app-sidebar-toggle .icon-close{display:none;}
+.app-sidebar-collapsed .app-sidebar-toggle .icon-open{display:block;}
+.app-sidebar-collapsed .app-content{padding-left:94px;}
+.app-sidebar-collapsed .app-brand{
+    padding:10px 6px;
+    border-radius:16px;
+}
+.app-sidebar-collapsed .app-brand-logo-wrap{
+    width:44px;
+    height:44px;
+    border-radius:14px;
+    padding:4px;
+}
+.app-sidebar-collapsed .app-brand-logo{
+    border-radius:10px;
+    transform:none;
+}
+.app-sidebar-collapsed .app-brand-text,
+.app-sidebar-collapsed .app-menu-link span,
+.app-sidebar-collapsed .app-profile-text{
+    display:none;
+}
+.app-sidebar-collapsed .app-menu-link{
+    justify-content:center;
+    padding:11px 0;
+    gap:0;
+}
+.app-sidebar-collapsed .app-sidebar-footer{
+    align-items:center;
+}
+.app-sidebar-collapsed .app-profile{
+    padding:8px;
+    justify-content:center;
+}
+.app-sidebar-collapsed .app-profile-main{
+    flex:0 0 auto;
+    padding:0;
+}
+.app-sidebar-collapsed .app-profile-logout{
+    width:38px;
 }
 .app-brand{display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 12px 14px;border-radius:20px;background:linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,0.08), 0 4px 12px rgba(0,0,0,0.15);}
 .app-brand-logo-wrap{width:80px;height:80px;border-radius:20px;background:linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.92) 100%);padding:6px;display:grid;place-items:center;box-shadow:0 12px 24px rgba(0,0,0,0.15), inset 0 2px 4px rgba(255,255,255,0.9);border:2px solid rgba(255,255,255,0.4);}
@@ -1672,6 +1801,7 @@ background:rgba(255,255,255,0.16);
 .app-content{flex:1;
 padding:18px 18px 18px 266px;
 height:100vh;overflow:hidden;
+transition:padding-left 0.25s ease;
 }
 .app-shell{max-width:1180px;
 margin:0 auto;
@@ -1685,9 +1815,20 @@ display:flex;
 flex-direction:column;
 }
 .app-topbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;background:rgba(255,255,255,0.92);border-bottom:1px solid var(--line);flex-shrink:0;}
-.app-topbar-brand{display:none;align-items:center;gap:10px;font-weight:800;color:#0f172a;}
+.app-topbar-brand{display:none;align-items:center;gap:10px;font-weight:800;color:#0f172a;position:relative;}
 .app-topbar-brand img{width:34px;height:34px;object-fit:contain;}
-.app-topbar-brand span{font-size:13px;line-height:1.05;letter-spacing:0.04em;}
+.app-topbar-org-info{display:flex;align-items:center;gap:6px;}
+.app-topbar-org-info span{font-size:13px;line-height:1.05;letter-spacing:0.04em;}
+.app-org-menu-btn{background:none;border:none;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#64748b;border-radius:6px;transition:all 0.2s;}
+.app-org-menu-btn:hover{background:#f1f5f9;color:#334155;}
+.app-org-menu-btn svg{width:16px;height:16px;stroke-width:2;}
+.app-org-menu{position:absolute;top:100%;left:0;margin-top:8px;background:#fff;border:1px solid #dbe4f0;border-radius:12px;box-shadow:0 8px 24px rgba(42, 15, 15, 0.12);min-width:250px;z-index:1000;opacity:0;transform:translateY(-10px);pointer-events:none;transition:all 0.2s;padding:8px;}
+.app-org-menu[aria-hidden="false"]{opacity:1;transform:translateY(0);pointer-events:auto;}
+.app-org-menu-item{padding:8px 12px;font-size:13px;color:#334155;font-weight:600;}
+.app-org-menu-divider{height:1px;background:#e7edf7;margin:8px 0;}
+.app-org-menu-info{padding:8px 12px;}
+.app-org-menu-info p{margin:6px 0;font-size:12px;color:#64748b;line-height:1.4;}
+.app-org-menu-info strong{color:#0f172a;font-weight:600;}
 .app-topbar-content{display:flex;align-items:center;gap:12px;flex:1;justify-content:flex-end;}
 .app-topbar-profile{width:42px;height:42px;border-radius:50%;border:1px solid #dbe4f0;background:#fff;display:none;align-items:center;justify-content:center;padding:0;overflow:hidden;color:#334155;box-shadow:0 8px 18px rgba(42, 15, 15, 0.08);}
 .app-topbar-profile .app-avatar{width:100%;height:100%;font-size:12px;}
@@ -1736,6 +1877,7 @@ flex-direction:column;
 .app-sidebar svg,.app-topbar svg,.app-mobile-nav svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;}
 @media (max-width: 860px){
     .app-sidebar{display:none;}
+    .app-sidebar-toggle{display:none;}
     body{background:#f5f7fc;}
     .app-content{padding:0;margin-left:0;height:100vh;}
     .app-shell{max-width:none;border-radius:0;border-left:0;border-right:0;border-bottom:0;height:100vh;}
@@ -1749,35 +1891,47 @@ flex-direction:column;
     .app-topbar-desktop{display:none;}
     .app-page{padding:14px 14px 96px;}
     .app-page-head{flex-direction:column;}
+    .app-page-head h1{font-size:28px;}
     .app-mobile-nav{
         display:grid;
-        grid-template-columns:repeat(5, 1fr);
-        gap:4px;
+        grid-template-columns:repeat(auto-fit, minmax(64px, 1fr));
+        gap:6px;
         position:fixed;
-        left:10px;
-        right:10px;
-        bottom:10px;
-        padding:10px 8px calc(10px + env(safe-area-inset-bottom, 0px));
-        background:rgba(255,255,255,0.96);
-        border:1px solid #dfe6f2;
-        border-radius:18px;
-        box-shadow:0 16px 34px rgba(42, 15, 15, 0.12);
+        left:8px;
+        right:8px;
+        bottom:8px;
+        padding:8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+        background:rgba(255,255,255,0.98);
+        border:1px solid #d9e3f2;
+        border-radius:16px;
+        box-shadow:0 14px 32px rgba(15, 23, 42, 0.16);
         backdrop-filter:blur(12px);
         z-index:50;
         transition:all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .app-mobile-link{
-        padding:6px 4px;
+        min-height:56px;
+        padding:7px 4px;
         display:flex;
         flex-direction:column;
+        justify-content:center;
         align-items:center;
-        gap:5px;
-        font-size:11px;
+        gap:4px;
+        font-size:10px;
+        line-height:1.1;
         font-weight:700;
         color:#64748b;
-        border-radius:12px;
+        border-radius:14px;
+        text-align:center;
+        overflow:hidden;
     }
-.app-mobile-link.active{color:var(--blue);background:#eef4ff;}
+    .app-mobile-link span{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .app-mobile-link.active{color:#fff;background:var(--blue);box-shadow:0 8px 18px rgba(37, 99, 255, 0.24);}
+    .app-mobile-link svg{width:21px;height:21px;flex-shrink:0;}
+}
+@media (max-width: 380px){
+    .app-mobile-nav{left:6px;right:6px;bottom:6px;gap:4px;padding:7px 6px calc(7px + env(safe-area-inset-bottom, 0px));}
+    .app-mobile-link{min-height:52px;font-size:9.5px;border-radius:12px;}
     .app-mobile-link svg{width:20px;height:20px;}
 }
 </style>' . $extraHead . '
@@ -1787,9 +1941,9 @@ flex-direction:column;
 <aside class="app-sidebar">
     <div class="app-brand">
         <div class="app-brand-logo-wrap">
-            <img src="' . h($systemLogo) . '" alt="' . h($systemName) . '" class="app-brand-logo">
+            <img src="' . h($displayLogo) . '" alt="' . h($displayName) . '" class="app-brand-logo">
         </div>
-        <div class="app-brand-text">' . h($systemName) . '</div>
+        <div class="app-brand-text">' . h($displayName) . '</div>
     </div>
     <nav class="app-menu">' . $sidebarMenu . '</nav>
     <div class="app-sidebar-footer">
@@ -1804,12 +1958,32 @@ flex-direction:column;
         </div>
     </div>
 </aside>
+<button type="button" class="app-sidebar-toggle" data-sidebar-toggle aria-label="Minimize sidebar" aria-expanded="true">
+    <span class="icon-close">' . appIcon('chevron-left') . '</span>
+    <span class="icon-open">' . appIcon('chevron-right') . '</span>
+</button>
 <div class="app-content">
 <div class="app-shell">
     <div class="app-topbar">
         <div class="app-topbar-brand">
-            <img src="' . h($systemLogo) . '" alt="' . h($systemName) . '">
-            <span>' . h($systemName) . '</span>
+            <img src="' . h($displayLogo) . '" alt="' . h($displayName) . '">
+            <div class="app-topbar-org-info">
+                <span>' . h($displayName) . '</span>
+                <button type="button" class="app-org-menu-btn" data-open-org-menu aria-label="Organization menu" aria-expanded="false">
+                    ' . appIcon('chevron-down') . '
+                </button>
+            </div>
+            <div class="app-org-menu" data-org-menu aria-hidden="true">
+                <div class="app-org-menu-item">
+                    <strong>Organization Information</strong>
+                </div>
+                <div class="app-org-menu-divider"></div>
+                <div class="app-org-menu-info">
+                    <p><strong>Name:</strong> ' . h($displayName) . '</p>
+                    <p><strong>Role:</strong> ' . h($role) . '</p>
+                    <p><strong>Status:</strong> Active</p>
+                </div>
+            </div>
         </div>
         <div class="app-topbar-content">
             <div class="app-topbar-desktop">' . $topbarContent . '</div>
@@ -1946,6 +2120,61 @@ function renderAppShellEnd($active = '')
         // // Force redirect to login if trying to go back
         // window.location.href = "login.php";
     };
+
+    // ========== DESKTOP SIDEBAR TOGGLE ==========
+    const sidebarToggle = document.querySelector("[data-sidebar-toggle]");
+    const sidebarStorageKey = "qrAttendanceSidebarCollapsed";
+
+    const setSidebarCollapsed = function(collapsed) {
+        document.body.classList.toggle("app-sidebar-collapsed", collapsed);
+        if (sidebarToggle) {
+            sidebarToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+            sidebarToggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Minimize sidebar");
+        }
+    };
+
+    try {
+        setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "1");
+    } catch (error) {
+        setSidebarCollapsed(false);
+    }
+
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener("click", function() {
+            const collapsed = !document.body.classList.contains("app-sidebar-collapsed");
+            setSidebarCollapsed(collapsed);
+            try {
+                localStorage.setItem(sidebarStorageKey, collapsed ? "1" : "0");
+            } catch (error) {}
+        });
+    }
+
+    // ========== TOPBAR ORGANIZATION MENU ==========
+    const orgMenuButton = document.querySelector("[data-open-org-menu]");
+    const orgMenu = document.querySelector("[data-org-menu]");
+
+    const closeOrgMenu = function() {
+        if (!orgMenu || !orgMenuButton) {
+            return;
+        }
+        orgMenu.setAttribute("aria-hidden", "true");
+        orgMenuButton.setAttribute("aria-expanded", "false");
+    };
+
+    if (orgMenuButton && orgMenu) {
+        orgMenuButton.addEventListener("click", function(event) {
+            event.stopPropagation();
+            const isOpen = orgMenu.getAttribute("aria-hidden") === "false";
+            orgMenu.setAttribute("aria-hidden", isOpen ? "true" : "false");
+            orgMenuButton.setAttribute("aria-expanded", isOpen ? "false" : "true");
+        });
+
+        document.addEventListener("click", function(event) {
+            if (!orgMenu.contains(event.target) && !orgMenuButton.contains(event.target)) {
+                closeOrgMenu();
+            }
+        });
+    }
 
     // ========== PROFILE DRAWER ==========
     const body = document.body;

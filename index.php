@@ -287,10 +287,117 @@
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
         }
 
+        .info-section {
+            padding: 5rem 2rem;
+            background: #f8fafc;
+        }
+
+        .info-section.alt {
+            background: #ffffff;
+        }
+
+        .info-container {
+            max-width: 980px;
+            margin: 0 auto;
+        }
+
+        .info-container h2 {
+            font-size: 2.25rem;
+            margin-bottom: 2rem;
+            color: var(--dark);
+            text-align: center;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 1rem;
+        }
+
+        .info-card {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.75rem;
+            padding: 1.25rem;
+            box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+        }
+
+        .info-section.alt .info-card {
+            background: #f8fafc;
+        }
+
+        .info-card h3 {
+            margin: 0 0 0.75rem;
+            color: #2c1a1a;
+            font-size: 1.1rem;
+        }
+
+        .info-card p {
+            margin: 0;
+            color: #4b5563;
+            line-height: 1.6;
+        }
+
+        .contact-links {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.8rem 1.4rem;
+            margin-top: 1.5rem;
+        }
+
+        .contact-links a {
+            color: #ffffff;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            font-weight: 600;
+            font-size: 0.96rem;
+            opacity: 0.9;
+        }
+
+        .contact-links a:hover {
+            opacity: 1;
+            text-decoration: underline;
+        }
+
         /* Mobile Responsive */
         @media (max-width: 768px) {
             .nav-links {
-                display: none;
+                position: absolute;
+                top: calc(100% + 0.75rem);
+                left: 1rem;
+                right: 1rem;
+                display: flex;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 0.5rem;
+                padding: 1rem;
+                background: rgba(255, 255, 255, 0.98);
+                border: 1px solid rgba(55, 31, 31, 0.12);
+                border-radius: 0.75rem;
+                box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
+                opacity: 0;
+                transform: translateY(-8px);
+                pointer-events: none;
+                transition: opacity 0.2s ease, transform 0.2s ease;
+            }
+
+            .nav-links.active {
+                opacity: 1;
+                transform: translateY(0);
+                pointer-events: auto;
+            }
+
+            .nav-links a {
+                width: 100%;
+                padding: 0.8rem 0.9rem;
+                border-radius: 0.5rem;
+            }
+
+            .nav-links a:hover {
+                background: rgba(55, 31, 31, 0.08);
             }
 
             .mobile-menu-btn {
@@ -315,6 +422,7 @@
 
             .hero-buttons {
                 justify-content: center;
+                list-style: none;
             }
 
             .features-grid {
@@ -339,11 +447,11 @@
             </div>
             <div class="nav-links">
                 <a href="#features">Features</a>
-                <a href="#how-it-works">How It Works</a>
-                <a href="#" class="btn ">FAQ</a>
-                <a href="#" class="btn ">Help</a>
+                <a href="#faq">FAQ</a>
+                <a href="#privacy">Privacy</a>
+                <a href="#contact">Contact</a>
             </div>
-            <button class="mobile-menu-btn">
+            <button class="mobile-menu-btn" type="button" aria-label="Open navigation menu" aria-expanded="false">
                 <i class="fas fa-bars"></i>
             </button>
         </div>
@@ -403,33 +511,97 @@
         </div>
     </section>
 
+    <!-- FAQ Section -->
+    <section class="info-section" id="faq">
+        <div class="info-container">
+            <h2>FAQ</h2>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>How does QR attendance work?</h3>
+                    <p>An organizer creates an event, the system generates a QR code, and attendees scan it to submit attendance details securely.</p>
+                </div>
+                <div class="info-card">
+                    <h3>Can attendees use mobile phones?</h3>
+                    <p>Yes. The system is designed to work on phones, tablets, and desktop browsers.</p>
+                </div>
+                <div class="info-card">
+                    <h3>Who can view reports?</h3>
+                    <p>Authorized organizers and organization admins can view attendance reports for events they manage.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Privacy Section -->
+    <section class="info-section alt" id="privacy">
+        <div class="info-container">
+            <h2>Privacy</h2>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>Personal information</h3>
+                    <p>The system stores registration details only for attendance management and event participation records.</p>
+                </div>
+                <div class="info-card">
+                    <h3>Scan information</h3>
+                    <p>QR scan data, device details, and location details may be used to validate attendance and reduce false check-ins.</p>
+                </div>
+                <div class="info-card">
+                    <h3>Access control</h3>
+                    <p>Attendance records are available only to authorized users based on their role and organization.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- CTA Section -->
-    <section class="cta">
+    <section class="cta" id="contact">
         <div class="cta-container">
-            <h2>Ready to Transform Your Events?</h2>
-            <p>Join thousands of organizations using QR Attendance System for efficient event management</p>
-            <div class="hero-buttons" style="justify-content: center;">
-                <a href="registrer.php" class="btn btn-primary">
-                    <i class="fas fa-rocket"></i>
-                    Start Now
-                </a>
-                <a href="login.php" class="btn btn-secondary">
-                    <i class="fas fa-sign-in-alt"></i>
-                    Login
-                </a>
+            <h2>Contact Us</h2>
+            <p>Have questions or need assistance? Get in touch with our team.</p>
+            <div class="contact-links">
+                <a href="mailto:meshackkaaya50@gmail.com"><i class="fas fa-envelope"></i> meshackkaaya50@gmail.com</a>
+                <a href="tel:+255794872433"><i class="fas fa-phone"></i> +255 794 872 433</a>
+                <a href="https://wa.me/255794872433" target="_blank" rel="noopener"><i class="fab fa-whatsapp"></i> WhatsApp</a>
+                <a href="https://www.qrattendance.com" target="_blank" rel="noopener"><i class="fas fa-globe"></i> www.qrattendance.com</a>
             </div>
         </div>
     </section>
 
     <script>
         // Mobile menu toggle
-        document.querySelector('.mobile-menu-btn').addEventListener('click', function() {
-            alert('Mobile menu would open here');
-        });
+        const mobileMenuButton = document.querySelector('.mobile-menu-btn');
+        const navLinks = document.querySelector('.nav-links');
+
+        if (mobileMenuButton && navLinks) {
+            mobileMenuButton.addEventListener('click', function() {
+                const isOpen = navLinks.classList.toggle('active');
+                mobileMenuButton.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+                mobileMenuButton.setAttribute('aria-label', isOpen ? 'Close navigation menu' : 'Open navigation menu');
+                const icon = mobileMenuButton.querySelector('i');
+                if (icon) {
+                    icon.className = isOpen ? 'fas fa-times' : 'fas fa-bars';
+                }
+            });
+
+            navLinks.querySelectorAll('a').forEach(link => {
+                link.addEventListener('click', function() {
+                    navLinks.classList.remove('active');
+                    mobileMenuButton.setAttribute('aria-expanded', 'false');
+                    mobileMenuButton.setAttribute('aria-label', 'Open navigation menu');
+                    const icon = mobileMenuButton.querySelector('i');
+                    if (icon) {
+                        icon.className = 'fas fa-bars';
+                    }
+                });
+            });
+        }
 
         // Smooth scrolling
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
             anchor.addEventListener('click', function (e) {
+                if (this.getAttribute('href') === '#') {
+                    return;
+                }
                 e.preventDefault();
                 const target = document.querySelector(this.getAttribute('href'));
                 if (target) {

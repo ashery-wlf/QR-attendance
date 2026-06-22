@@ -10,14 +10,35 @@ $user_id = (int) $_SESSION['user_id'];
 $event_id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
 $event = $conn->query("SELECT * FROM events WHERE id=$event_id AND deleted = FALSE LIMIT 1")->fetch_assoc();
 
-if (!$event) {
-    die("Event not found.");
+// Get user's registered events for the modal
+$userEvents = $conn->query("
+    SELECT e.*, p.access_code
+    FROM events e
+    LEFT JOIN participants p ON e.id = p.event_id AND p.user_id = $user_id
+    WHERE e.deleted = FALSE
+    AND (e.created_by = $user_id OR p.user_id = $user_id)
+    ORDER BY e.date DESC, e.time DESC
+");
+
+$showEventModal = false;
+if (!$event && $userEvents && $userEvents->num_rows > 0) {
+    $showEventModal = true;
+} elseif (!$event) {
+    die("No events available. Please join an event first.");
 }
 
-$isAdmin = (int) $event['created_by'] === $user_id;
-$isRegistered = registrationExists($conn, $user_id, $event_id) || $isAdmin;
-$windowState = attendanceWindowState($event);
-$attendanceOpenTime = appEventTimeOrDefault($event['attendance_start'] ?? '', $event['time'] ?? '');
+// Only process event data if event exists
+$isAdmin = false;
+$isRegistered = false;
+$windowState = 'closed';
+$attendanceOpenTime = '';
+
+if ($event) {
+    $isAdmin = (int) $event['created_by'] === $user_id;
+    $isRegistered = registrationExists($conn, $user_id, $event_id) || $isAdmin;
+    $windowState = attendanceWindowState($event);
+    [$attendanceOpenTime] = appAutomaticAttendanceWindow($event['time'] ?? '');
+}
 ?>
 <?php
 $pageCss = <<<'CSS'
@@ -149,6 +170,95 @@ a{
     text-decoration:none;
     font-weight:700;
 }
+
+.event-modal-overlay{
+    position:fixed;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    background:rgba(0,0,0,0.5);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:9999;
+}
+
+.event-modal{
+    background:#fff;
+    border-radius:16px;
+    padding:24px;
+    max-width:500px;
+    width:90%;
+    max-height:80vh;
+    overflow-y:auto;
+    box-shadow:0 20px 40px rgba(0,0,0,0.2);
+}
+
+.event-modal h2{
+    margin:0 0 16px;
+    font-size:24px;
+    color:#0f172a;
+}
+
+.event-modal p{
+    margin:0 0 20px;
+    color:#64748b;
+}
+
+.event-list{
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+}
+
+.event-item{
+    border:1px solid #e2e8f0;
+    border-radius:12px;
+    padding:16px;
+    cursor:pointer;
+    transition:all 0.2s;
+}
+
+.event-item:hover{
+    border-color:#2563ff;
+    background:#f8fafc;
+}
+
+.event-item-name{
+    font-weight:600;
+    color:#0f172a;
+    margin-bottom:4px;
+}
+
+.event-item-details{
+    font-size:13px;
+    color:#64748b;
+}
+
+.event-item-status{
+    display:inline-block;
+    padding:4px 12px;
+    border-radius:20px;
+    font-size:12px;
+    font-weight:600;
+    margin-top:8px;
+}
+
+.status-live{
+    background:#fff3e0;
+    color:#e65100;
+}
+
+.status-upcoming{
+    background:#e3f2fd;
+    color:#1565c0;
+}
+
+.status-ended{
+    background:#e8f5e9;
+    color:#2e7d32;
+}
 </style>
 CSS;
 
@@ -161,6 +271,33 @@ renderAppShellStart($conn, [
     "extra_head" => $pageCss,
 ]);
 ?>
+
+<?php if ($showEventModal): ?>
+<div class="event-modal-overlay" id="eventModal">
+    <div class="event-modal">
+        <h2>Select an Event</h2>
+        <p>Choose an event to scan attendance for:</p>
+        <div class="event-list">
+            <?php while ($evt = $userEvents->fetch_assoc()): ?>
+                <?php
+                $status = eventLifecycleStatus($evt);
+                $statusClass = 'status-' . $status;
+                $statusLabel = ucfirst($status);
+                ?>
+                <div class="event-item" onclick="selectEvent(<?php echo (int)$evt['id']; ?>)">
+                    <div class="event-item-name"><?php echo h($evt['name']); ?></div>
+                    <div class="event-item-details">
+                        <?php echo h(formatEventDate($evt['date'])); ?> • <?php echo h(formatEventTime($evt['time'])); ?>
+                    </div>
+                    <div class="event-item-status <?php echo $statusClass; ?>"><?php echo $statusLabel; ?></div>
+                </div>
+            <?php endwhile; ?>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
+<?php if ($event): ?>
 <div class="shell">
     <h1>Scan Attendance</h1>
     <p><?php echo h($event['name']); ?> • <?php echo h(formatEventDate($event['date'])); ?> • <?php echo h(formatEventTime($event['time'])); ?></p>
@@ -193,6 +330,7 @@ renderAppShellStart($conn, [
 
     <a href="event.php?id=<?php echo $event_id; ?>">Back to event</a>
 </div>
+<?php endif; ?>
 
 <?php if ($isRegistered && $windowState === 'open'): ?>
 <script>
@@ -228,11 +366,11 @@ function getDeviceInfo() {
     let osName = "Unknown";
     
     // Detect OS
-    if (userAgent.indexOf("Windows") > -1) osName = "Windows";
+    if (userAgent.indexOf("Android") > -1) osName = "Android";
+    else if (userAgent.indexOf("iPhone") > -1 || userAgent.indexOf("iPad") > -1) osName = "iOS";
+    else if (userAgent.indexOf("Windows") > -1) osName = "Windows";
     else if (userAgent.indexOf("Mac") > -1) osName = "macOS";
     else if (userAgent.indexOf("Linux") > -1) osName = "Linux";
-    else if (userAgent.indexOf("Android") > -1) osName = "Android";
-    else if (userAgent.indexOf("iPhone") > -1 || userAgent.indexOf("iPad") > -1) osName = "iOS";
     
     // Detect browser with version
     if (userAgent.indexOf("Chrome") > -1 && userAgent.indexOf("Edg") === -1) {
@@ -373,12 +511,13 @@ function getBrowserInfo() {
     return browserInfo;
 }
 
-function submitAttendance(token) {
+async function submitAttendance(token) {
     if (scannerBusy) {
         return;
     }
     scannerBusy = true;
     
+    await ensureScanLocation();
     const deviceInfo = getDeviceInfo();
     const browserInfo = getBrowserInfo();
 
@@ -410,12 +549,13 @@ function submitAttendance(token) {
     });
 }
 
-function submitAttendanceCode(code) {
+async function submitAttendanceCode(code) {
     if (scannerBusy) {
         return;
     }
     scannerBusy = true;
 
+    await ensureScanLocation();
     const deviceInfo = getDeviceInfo();
     const browserInfo = getBrowserInfo();
 
@@ -511,21 +651,39 @@ async function startCameraScan() {
 
 function captureScanLocation() {
     if (!navigator.geolocation) {
-        return;
+        return Promise.resolve(false);
     }
 
-    navigator.geolocation.getCurrentPosition(function(position) {
-        scanGeo.lat = Number(position.coords.latitude.toFixed(7));
-        scanGeo.lng = Number(position.coords.longitude.toFixed(7));
-        scanGeo.address = scanGeo.lat + ", " + scanGeo.lng;
-    }, function() {}, {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 60000
+    return new Promise(function(resolve) {
+        navigator.geolocation.getCurrentPosition(function(position) {
+            scanGeo.lat = Number(position.coords.latitude.toFixed(7));
+            scanGeo.lng = Number(position.coords.longitude.toFixed(7));
+            scanGeo.address = scanGeo.lat + ", " + scanGeo.lng;
+            resolve(true);
+        }, function() {
+            resolve(false);
+        }, {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 60000
+        });
     });
 }
 
+async function ensureScanLocation() {
+    if (scanGeo.lat && scanGeo.lng) {
+        return true;
+    }
+
+    setResult("Getting your location before submitting attendance...", false);
+    return captureScanLocation();
+}
+
 captureScanLocation();
+
+function selectEvent(eventId) {
+    window.location.href = 'scan.php?id=' + eventId;
+}
 
 document.getElementById("startCamera").addEventListener("click", startCameraScan);
 

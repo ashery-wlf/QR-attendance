@@ -1,0 +1,85 @@
+@startuml
+title Figure 4.1: System Architecture Diagram
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam packageStyle rectangle
+
+actor "Attendee" as Attendee
+actor "Organizer" as Organizer
+
+node "Client Device\n(Web Browser)" as Browser {
+  component "User Interface\nHTML, CSS, JavaScript" as UI
+  component "QR Scanner\nCamera Input" as Scanner
+}
+
+node "Web Server\nApache / XAMPP" as Server {
+  package "PHP Application Layer" {
+    component "Authentication\nlogin.php, auth.php" as Auth
+    component "Dashboard\n dashboard.php" as Dashboard
+    component "Event Management\nevents.php, event.php,\ncreate-event.php" as Events
+    component "QR Generation\ngenerate-qr.php" as QRGen
+    component "Attendance Processing\nscan.php, save-attendance.php,\nattendance-submit.php" as Attendance
+    component "Reporting\nreport.php, attendance.php,\nmy-attendance.php" as Reports
+    component "Branding and Settings\norganization-branding.php,\nsystem-settings.php" as Settings
+  }
+
+  package "Shared Includes" {
+    component "Database Connection\nincludes/db.php" as DBConn
+    component "Application Utilities\nincludes/app.php" as App
+    component "Global Styling\nincludes/style.css" as Style
+  }
+}
+
+database "MySQL Database" as Database {
+  component "users" as Users
+  component "events" as EventTable
+  component "participants" as Participants
+  component "attendance" as AttendanceTable
+  component "organizations / venues" as OrgVenues
+}
+
+Attendee --> UI : Register, login,\nbrowse and join events
+Attendee --> Scanner : Scan QR code
+Organizer --> UI : Create events,\nmanage branding,\nview reports
+
+UI --> Auth : Login and session requests
+UI --> Dashboard : Open dashboard
+UI --> Events : Create, browse,\nand view events
+UI --> QRGen : Request event QR code
+Scanner --> Attendance : Submit QR scan,\ndevice and location data
+UI --> Reports : Request attendance reports
+UI --> Settings : Update organization\nbranding and settings
+
+Auth --> DBConn
+Dashboard --> DBConn
+Events --> DBConn
+QRGen --> DBConn
+Attendance --> DBConn
+Reports --> DBConn
+Settings --> DBConn
+
+Auth --> App
+Dashboard --> App
+Events --> App
+Reports --> App
+UI --> Style
+
+DBConn --> Database
+Database --> Users
+Database --> EventTable
+Database --> Participants
+Database --> AttendanceTable
+Database --> OrgVenues
+
+Events --> EventTable : Store and retrieve\nevent details
+Events --> Participants : Store event joining
+Attendance --> AttendanceTable : Save attendance records
+Attendance --> Participants : Verify participant
+Reports --> Users : Retrieve attendee data
+Reports --> EventTable : Retrieve event data
+Reports --> Participants : Retrieve participation data
+Reports --> AttendanceTable : Retrieve attendance data
+Settings --> OrgVenues : Store organization\nand venue data
+
+@enduml

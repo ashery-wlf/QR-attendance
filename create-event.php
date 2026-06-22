@@ -24,8 +24,7 @@ if (isset($_POST['submit'])) {
     $date = $_POST['date'] ?? "";
     $time = $_POST['time'] ?? "";
     $end_time = $_POST['end_time'] ?? "";
-    $attendance_start = $_POST['attendance_start'] ?? "";
-    $attendance_end = $_POST['attendance_end'] ?? "";
+    [$attendance_start, $attendance_end] = appAutomaticAttendanceWindow($time);
     $registration_mode = $_POST['registration_mode'] ?? "self";
     $venue_id = (int) ($_POST['venue_id'] ?? 0);
     $venue_name = "";
@@ -627,16 +626,9 @@ renderAppShellStart($conn, [
                 </select>
             </div>
 
-            <div class="field">
-                <label for="attendance_start">Attendance Opens</label>
-                <input id="attendance_start" type="time" name="attendance_start" value="<?php echo h($_POST['attendance_start'] ?? ''); ?>">
-                <div class="inline-note">If empty, attendance opens at the event start time.</div>
-            </div>
-
-            <div class="field">
-                <label for="attendance_end">Attendance Closes</label>
-                <input id="attendance_end" type="time" name="attendance_end" value="<?php echo h($_POST['attendance_end'] ?? ''); ?>">
-                <div class="inline-note">If empty, attendance closes at the end time.</div>
+            <div class="field full">
+                <label>Automatic QR Attendance Window</label>
+                <div class="inline-note">The live QR opens 10 minutes before the event start time and closes 20 minutes after the event starts.</div>
             </div>
 
             <div class="field">
@@ -672,17 +664,6 @@ renderAppShellStart($conn, [
                 <p id="venueSelectMessage" class="inline-note" style="display:none;margin-top:8px;color:#b91c1c;font-weight:700;"></p>
             </div>
 
-            <div class="field">
-                <label for="venue_name">Venue Name</label>
-                <input id="venue_name" type="text" name="venue_name" placeholder="Choose a venue above" value="<?php echo h($_POST['venue_name'] ?? ''); ?>" readonly>
-                <div class="inline-note">This is filled automatically from the selected venue.</div>
-            </div>
-
-            <div class="field">
-                <label for="venue_location">Venue Address (optional)</label>
-                <input id="venue_location" type="text" name="venue_location" placeholder="Choose a venue above" value="<?php echo h($_POST['venue_location'] ?? ''); ?>" readonly>
-                <div class="inline-note">Attendees will see this location and directions on the event page.</div>
-            </div>
 
             <div class="field">
                 <label for="max_distance_km">Allowed Scan Radius (km)</label>
@@ -798,8 +779,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const dateInput = document.getElementById("date");
     const startInput = document.getElementById("time");
     const endInput = document.getElementById("end_time");
-    const attendanceStartInput = document.getElementById("attendance_start");
-    const attendanceEndInput = document.getElementById("attendance_end");
 
     function pad(value) {
         return String(value).padStart(2, "0");
@@ -827,11 +806,6 @@ document.addEventListener('DOMContentLoaded', function() {
         return pad(date.getHours()) + ":" + pad(date.getMinutes());
     }
 
-    function maxTime() {
-        const values = Array.prototype.slice.call(arguments).filter(Boolean);
-        return values.sort().pop() || "";
-    }
-
     function syncTimeLimits() {
         const today = todayValue();
         const nowTime = currentTimeValue();
@@ -839,9 +813,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const startMin = isToday ? nowTime : "";
         const startValue = startInput ? startInput.value : "";
         const endMin = startValue ? addMinutes(startValue, 5) : startMin;
-        const attendanceOpenMin = maxTime(startValue, startMin);
-        const attendanceOpenValue = attendanceStartInput && attendanceStartInput.value ? attendanceStartInput.value : startValue;
-        const attendanceCloseMin = attendanceOpenValue ? addMinutes(attendanceOpenValue, 1) : endMin;
 
         if (dateInput) {
             dateInput.min = today;
@@ -858,26 +829,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 endInput.value = endMin;
             }
         }
-        if (attendanceStartInput) {
-            attendanceStartInput.min = attendanceOpenMin;
-            attendanceStartInput.max = endInput && endInput.value ? addMinutes(endInput.value, -1) : "";
-            if (attendanceStartInput.value && attendanceOpenMin && attendanceStartInput.value < attendanceOpenMin) {
-                attendanceStartInput.value = attendanceOpenMin;
-            }
-        }
-        if (attendanceEndInput) {
-            attendanceEndInput.min = attendanceCloseMin;
-            attendanceEndInput.max = endInput && endInput.value ? endInput.value : "";
-            if (attendanceEndInput.value && attendanceCloseMin && attendanceEndInput.value < attendanceCloseMin) {
-                attendanceEndInput.value = attendanceCloseMin;
-            }
-            if (attendanceEndInput.max && attendanceEndInput.value && attendanceEndInput.value > attendanceEndInput.max) {
-                attendanceEndInput.value = attendanceEndInput.max;
-            }
-        }
     }
 
-    [dateInput, startInput, endInput, attendanceStartInput, attendanceEndInput].forEach(function(input) {
+    [dateInput, startInput, endInput].forEach(function(input) {
         if (input) {
             input.addEventListener("change", syncTimeLimits);
         }

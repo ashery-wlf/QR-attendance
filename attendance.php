@@ -9,48 +9,54 @@ appRequireRole(['organization_admin', 'event_organizer', 'attendee']);
 $user_id = (int) $_SESSION['user_id'];
 $user_role = $_SESSION['user_role'] ?? 'attendee';
 $user_org_id = isset($_SESSION['organization_id']) ? (int) $_SESSION['organization_id'] : 0;
-$view = $_GET['view'] ?? 'attended'; // 'attended' or 'created'
+$view = $user_role === 'attendee' ? 'attended' : 'created';
 $event_id = isset($_GET['id']) ? (int) $_GET['id'] : 0;
+$canViewAllAttendance = false;
 
-// Get events based on role
+function attendanceExcelText($value)
+{
+    $value = trim((string) $value);
+    if ($value !== '' && preg_match('/^[=+\-@]/', $value)) {
+        $value = "'" . $value;
+    }
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
+
+function attendanceExcelFilename($eventName, $reportDate, $attendeeType)
+{
+    $base = preg_replace('/[^A-Za-z0-9_-]+/', '_', strtolower((string) $eventName));
+    $base = trim($base, '_');
+    if ($base === '') {
+        $base = 'attendance';
+    }
+
+    $datePart = $reportDate !== '' ? $reportDate : 'all_dates';
+    $typePart = $attendeeType !== 'all' ? $attendeeType : 'all_attendees';
+    return $base . '_' . $datePart . '_' . $typePart . '.xls';
+}
+
+$attendedEvents = null;
 if ($user_role === 'attendee') {
-    // Attendee: only their own attendance
     $attendedEvents = $conn->query("
         SELECT e.*, a.time as check_in_time, a.attendance_status, a.scan_address, a.scan_ip, a.browser_info, a.distance_from_venue
         FROM events e
         JOIN attendance a ON e.id = a.event_id
-        WHERE a.user_id = $user_id
+        WHERE a.user_id = $user_id AND e.deleted = FALSE
         ORDER BY a.time DESC
     ");
-    $createdEvents = null;
-} else {
-    // Org Admin / Event Organizer: org-scoped
-    if ($user_role === 'organization_admin') {
-        // Can see all org events' attendance
-        $attendedEvents = $conn->query("
-            SELECT e.*, a.time as check_in_time, a.attendance_status, a.scan_address, a.scan_ip, a.browser_info, a.distance_from_venue
-            FROM events e
-            JOIN attendance a ON e.id = a.event_id
-            WHERE e.organization_id = $user_org_id AND e.deleted = FALSE
-            ORDER BY a.time DESC
-        ");
-    } else {
-        // Event Organizer: own events + org events
-        $attendedEvents = $conn->query("
-            SELECT e.*, a.time as check_in_time, a.attendance_status, a.scan_address, a.scan_ip, a.browser_info, a.distance_from_venue
-            FROM events e
-            JOIN attendance a ON e.id = a.event_id
-            WHERE (e.created_by = $user_id OR e.organization_id = $user_org_id) AND e.deleted = FALSE
-            ORDER BY a.time DESC
-        ");
-    }
-    
-    // Get events user created
+}
+
+// Event records are visible only to the user who created that event.
+$createdEvents = null;
+if ($user_role !== 'attendee') {
+    $managedEventCondition = $user_role === 'organization_admin'
+        ? "e.organization_id = $user_org_id"
+        : "e.created_by = $user_id";
     $createdEvents = $conn->query("
         SELECT e.*, COUNT(a.id) as attendance_count
         FROM events e
         LEFT JOIN attendance a ON e.id = a.event_id
-        WHERE e.created_by = $user_id AND e.deleted = FALSE
+        WHERE $managedEventCondition AND e.deleted = FALSE
         GROUP BY e.id
         ORDER BY e.date DESC, e.time DESC
     ");
@@ -63,37 +69,123 @@ if ($event_id > 0) {
     $event = $conn->query("SELECT * FROM events WHERE id=$event_id AND deleted = FALSE LIMIT 1")->fetch_assoc();
     
     if ($event) {
-        // Check access permissions based on role
-        $hasAccess = false;
-        
-        if ($user_role === 'attendee') {
-            // Attendee: can only see events from their org they've attended
-            $hasAccess = ((int) $event['organization_id'] === $user_org_id) && 
-                         $conn->query("SELECT id FROM attendance WHERE event_id=$event_id AND user_id=$user_id LIMIT 1")->num_rows > 0;
-        } elseif ($user_role === 'organization_admin') {
-            // Org Admin: can see all org events
-            $hasAccess = ((int) $event['organization_id'] === $user_org_id);
-        } else {
-            // Event Organizer: can see own events + org events
-            $hasAccess = ((int) $event['created_by'] === $user_id) || ((int) $event['organization_id'] === $user_org_id);
-        }
+        $isEventCreator = (int) $event['created_by'] === $user_id;
+        $isOrganizationAdminForEvent = $user_role === 'organization_admin' && (int) $event['organization_id'] === $user_org_id;
+        $canViewAllAttendance = $isEventCreator || $isOrganizationAdminForEvent;
+        $ownAttendanceResult = $conn->query("SELECT id FROM attendance WHERE event_id=$event_id AND user_id=$user_id LIMIT 1");
+        $hasOwnAttendance = $ownAttendanceResult && $ownAttendanceResult->num_rows > 0;
+        $hasAccess = $canViewAllAttendance || $hasOwnAttendance;
         
         if (!$hasAccess) {
             die("Access denied: You don't have permission to view this event's attendance.");
         }
-        
-        if ((int) $event['created_by'] === $user_id) {
-            // User created this event - show all attendance
-            $attendanceData = $conn->query("
-                SELECT a.id, a.user_name, a.user_email, a.user_phone, a.device_info, a.time, a.attendance_status, a.scan_address, a.scan_ip, a.browser_info, a.distance_from_venue, a.phone_matched, a.verification_method, a.check_in_time, a.notes,
-                       u.attendee_type, u.reg_no, u.department
+
+        if ($canViewAllAttendance && isset($_GET['export']) && $_GET['export'] === 'excel') {
+            $attendeeTypeFilter = trim($_GET['attendee_type'] ?? 'all');
+            $allowedTypes = ['all', 'student', 'staff', 'guest'];
+
+            if (!in_array($attendeeTypeFilter, $allowedTypes, true)) {
+                $attendeeTypeFilter = 'all';
+            }
+
+            $reportDate = $event['date'] ?? '';
+            $exportConditions = ["a.event_id=$event_id"];
+            if ($attendeeTypeFilter !== 'all') {
+                $safeAttendeeType = $conn->real_escape_string($attendeeTypeFilter);
+                $exportConditions[] = "u.attendee_type='$safeAttendeeType'";
+            }
+
+            $exportRecords = $conn->query("
+                SELECT a.*, u.attendee_type, u.reg_no, u.department
                 FROM attendance a
                 LEFT JOIN users u ON u.id = a.user_id
-                WHERE a.event_id = $event_id
-                ORDER BY a.time DESC
+                WHERE " . implode(' AND ', $exportConditions) . "
+                ORDER BY a.time ASC
             ");
-        } elseif ($user_role === 'organization_admin') {
-            // Org admin viewing org event - show all attendance
+
+            $filename = attendanceExcelFilename($event['name'], $reportDate, $attendeeTypeFilter);
+            header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+            header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+            echo "\xEF\xBB\xBF";
+            ?>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    table { border-collapse: collapse; font-family: Arial, sans-serif; font-size: 12px; }
+                    th { background: #2563eb; color: #ffffff; font-weight: bold; }
+                    th, td { border: 1px solid #cbd5e1; padding: 7px; vertical-align: top; }
+                    .title { font-size: 18px; font-weight: bold; background: #e0f2fe; color: #0f172a; }
+                    .meta { background: #f8fafc; font-weight: bold; }
+                </style>
+            </head>
+            <body>
+                <table>
+                    <tr><td colspan="16" class="title">Attendance Report</td></tr>
+                    <tr><td class="meta">Event</td><td colspan="15"><?php echo attendanceExcelText($event['name']); ?></td></tr>
+                    <tr><td class="meta">Event Date</td><td colspan="15"><?php echo attendanceExcelText($event['date']); ?></td></tr>
+                    <tr><td class="meta">Report Date</td><td colspan="15"><?php echo attendanceExcelText($reportDate !== '' ? $reportDate : 'All dates'); ?></td></tr>
+                    <tr><td class="meta">Attendee Type</td><td colspan="15"><?php echo attendanceExcelText($attendeeTypeFilter === 'all' ? 'All attendees' : ucfirst($attendeeTypeFilter)); ?></td></tr>
+                    <tr></tr>
+                    <tr>
+                        <th>No.</th>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Phone</th>
+                        <th>Attendee Type</th>
+                        <th>Reg No</th>
+                        <th>Department</th>
+                        <th>Status</th>
+                        <th>Check-in Date</th>
+                        <th>Check-in Time</th>
+                        <th>Distance From Venue</th>
+                        <th>Location</th>
+                        <th>IP Address</th>
+                        <th>Device</th>
+                        <th>Browser</th>
+                        <th>Verification</th>
+                    </tr>
+                    <?php
+                    $rowNo = 1;
+                    if ($exportRecords && $exportRecords->num_rows > 0):
+                        while ($row = $exportRecords->fetch_assoc()):
+                            $deviceInfo = !empty($row['device_info']) ? json_decode($row['device_info'], true) : [];
+                            $browserInfo = !empty($row['browser_info']) ? json_decode($row['browser_info'], true) : [];
+                            $rowAttendeeType = $row['attendee_type'] ?: 'unknown';
+                            $checkInTimestamp = strtotime($row['time']);
+                            ?>
+                            <tr>
+                                <td><?php echo $rowNo++; ?></td>
+                                <td><?php echo attendanceExcelText($row['user_name']); ?></td>
+                                <td><?php echo attendanceExcelText($row['user_email']); ?></td>
+                                <td><?php echo attendanceExcelText($row['user_phone']); ?></td>
+                                <td><?php echo attendanceExcelText(ucfirst($rowAttendeeType)); ?></td>
+                                <td><?php echo attendanceExcelText($row['reg_no']); ?></td>
+                                <td><?php echo attendanceExcelText($row['department']); ?></td>
+                                <td><?php echo attendanceExcelText(ucfirst($row['attendance_status'] ?? 'present')); ?></td>
+                                <td><?php echo attendanceExcelText($checkInTimestamp ? date('Y-m-d', $checkInTimestamp) : ''); ?></td>
+                                <td><?php echo attendanceExcelText($checkInTimestamp ? date('H:i:s', $checkInTimestamp) : ''); ?></td>
+                                <td><?php echo attendanceExcelText($row['distance_from_venue'] !== null ? number_format((float) $row['distance_from_venue'], 2) . ' km' : ''); ?></td>
+                                <td><?php echo attendanceExcelText($row['scan_address']); ?></td>
+                                <td><?php echo attendanceExcelText($row['scan_ip']); ?></td>
+                                <td><?php echo attendanceExcelText($deviceInfo['device_type'] ?? 'Unknown'); ?></td>
+                                <td><?php echo attendanceExcelText($deviceInfo['browser'] ?? ($browserInfo['name'] ?? 'Unknown')); ?></td>
+                                <td><?php echo attendanceExcelText($row['verification_method']); ?></td>
+                            </tr>
+                        <?php endwhile;
+                    else: ?>
+                        <tr><td colspan="16">No attendance records found for the selected filters.</td></tr>
+                    <?php endif; ?>
+                </table>
+            </body>
+            </html>
+            <?php
+            exit();
+        }
+        
+        if ($canViewAllAttendance) {
+            // Event organizers and organization admins can view records for managed events.
             $attendanceData = $conn->query("
                 SELECT a.id, a.user_name, a.user_email, a.user_phone, a.device_info, a.time, a.attendance_status, a.scan_address, a.scan_ip, a.browser_info, a.distance_from_venue, a.phone_matched, a.verification_method, a.check_in_time, a.notes,
                        u.attendee_type, u.reg_no, u.department
@@ -103,7 +195,7 @@ if ($event_id > 0) {
                 ORDER BY a.time DESC
             ");
         } else {
-            // Attendee or Event Organizer viewing as participant - show only their attendance
+            // Non-creators can only see their own attendance record.
             $attendanceData = $conn->query("
                 SELECT a.id, a.user_name, a.user_email, a.user_phone, a.device_info, a.time, a.attendance_status, a.scan_address, a.scan_ip, a.browser_info, a.distance_from_venue, a.phone_matched, a.verification_method, a.check_in_time, a.notes,
                        u.attendee_type, u.reg_no, u.department
@@ -421,7 +513,72 @@ $pageCss = <<<'CSS'
     text-align: right;
     color: #e5e7eb;
 }
-    word-break: break-all;
+
+.device-details-panel {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: 2000;
+    width: min(92vw, 420px);
+    max-height: min(78vh, 560px);
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+    overflow-y: auto;
+    transform: translate(-50%, -50%);
+}
+
+.device-details-panel.show {
+    display: block;
+}
+
+.device-detail-row {
+    display: grid;
+    grid-template-columns: 120px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #eef2ff;
+    font-size: 12px;
+    background: #fff;
+}
+
+.device-detail-row:last-child {
+    border-bottom: 0;
+}
+
+.device-detail-label {
+    color: #475569;
+    font-weight: 800;
+}
+
+.device-detail-value {
+    color: #0f172a;
+    word-break: break-word;
+}
+
+.device-detail-toggle {
+    margin-top: 6px;
+    border: 0;
+    background: transparent;
+    color: #1d4ed8;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    padding: 0;
+}
+
+.device-popup-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1999;
+    background: rgba(15, 23, 42, 0.38);
+}
+
+.device-popup-backdrop.show {
+    display: block;
 }
 
 /* Attendance Table */
@@ -454,6 +611,55 @@ $pageCss = <<<'CSS'
     display: flex;
     gap: 15px;
     align-items: center;
+}
+
+.attendance-export {
+    margin: 0 0 18px;
+    padding: 14px;
+    border: 1px solid #dbe4f0;
+    border-radius: 14px;
+    background: #f8fafc;
+}
+
+.attendance-export form {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) auto;
+    gap: 10px;
+    align-items: end;
+}
+
+.attendance-export label {
+    display: grid;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #334155;
+}
+
+.attendance-export input,
+.attendance-export select {
+    width: 100%;
+    height: 40px;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    padding: 0 10px;
+    background: #ffffff;
+    color: #0f172a;
+}
+
+.attendance-export button {
+    height: 40px;
+    border: none;
+    border-radius: 10px;
+    padding: 0 16px;
+    background: #16a34a;
+    color: #ffffff;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.attendance-export button:hover {
+    background: #15803d;
 }
 
 .stat-badge {
@@ -550,6 +756,10 @@ $pageCss = <<<'CSS'
     .table-header {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    .attendance-export form {
+        grid-template-columns: 1fr;
     }
     
     .attendance-table {
@@ -767,7 +977,9 @@ renderAppShellStart($conn, [
     "title" => "Attendance Hub",
     "active" => "attendance",
     "page_title" => "Attendance Hub",
-    "page_subtitle" => "View events you attended and events you created",
+    "page_subtitle" => $user_role === 'attendee'
+        ? "View events you attended"
+        : "View attendance records for events you manage",
     "search_placeholder" => "Search attendance...",
     "extra_head" => $pageCss,
 ]);
@@ -788,17 +1000,40 @@ renderAppShellStart($conn, [
             <div class="table-header">
                 <h2 class="table-title"><?php echo h($event['name']); ?></h2>
                 <div class="table-stats">
-                    <span class="stat-badge">
-                        <i class="fas fa-users"></i> <?php echo $totalAttendees; ?> Attendees
-                    </span>
-                    <span class="stat-badge">Students: <?php echo (int) $attendeeTypeStats['student']; ?></span>
-                    <span class="stat-badge">Staff: <?php echo (int) $attendeeTypeStats['staff']; ?></span>
-                    <span class="stat-badge">Guests: <?php echo (int) $attendeeTypeStats['guest']; ?></span>
-                    <?php if ($attendeeTypeStats['unknown'] > 0): ?>
-                        <span class="stat-badge">Unknown: <?php echo (int) $attendeeTypeStats['unknown']; ?></span>
+                    <?php if ($canViewAllAttendance): ?>
+                        <span class="stat-badge">
+                            <i class="fas fa-users"></i> <?php echo $totalAttendees; ?> Attendees
+                        </span>
+                        <span class="stat-badge">Students: <?php echo (int) $attendeeTypeStats['student']; ?></span>
+                        <span class="stat-badge">Staff: <?php echo (int) $attendeeTypeStats['staff']; ?></span>
+                        <span class="stat-badge">Guests: <?php echo (int) $attendeeTypeStats['guest']; ?></span>
+                    <?php else: ?>
+                        <span class="stat-badge">
+                            <i class="fas fa-user-check"></i> My Check-in
+                        </span>
                     <?php endif; ?>
                 </div>
             </div>
+
+            <?php if ($canViewAllAttendance): ?>
+                <div class="attendance-export">
+                    <form method="GET" action="attendance.php">
+                        <input type="hidden" name="id" value="<?php echo (int) $event_id; ?>">
+                        <input type="hidden" name="export" value="excel">
+                        <label>
+                            Attendee Type
+                            <?php $selectedExportType = $_GET['attendee_type'] ?? 'all'; ?>
+                            <select name="attendee_type">
+                                <option value="all" <?php echo $selectedExportType === 'all' ? 'selected' : ''; ?>>All attendees</option>
+                                <option value="student" <?php echo $selectedExportType === 'student' ? 'selected' : ''; ?>>Students only</option>
+                                <option value="staff" <?php echo $selectedExportType === 'staff' ? 'selected' : ''; ?>>Staff only</option>
+                                <option value="guest" <?php echo $selectedExportType === 'guest' ? 'selected' : ''; ?>>Guests only</option>
+                            </select>
+                        </label>
+                        <button type="submit">Download Excel</button>
+                    </form>
+                </div>
+            <?php endif; ?>
 
             <div style="overflow-x: auto;">
                 <table class="attendance-table">
@@ -837,24 +1072,25 @@ renderAppShellStart($conn, [
                                     $browserInfo = json_decode($row['browser_info'], true);
                                 }
                                 
-                                $deviceText = ($deviceInfo['device_type'] ?? 'Unknown') . ' • ' . ($deviceInfo['browser'] ?? 'Unknown');
-                                
+                                $deviceText = ($deviceInfo['device_type'] ?? 'Unknown') . ' - ' . ($deviceInfo['browser'] ?? ($browserInfo['name'] ?? 'Unknown'));
+
                                 // Generate unique ID for this row
                                 $rowId = 'device_' . $row['id'] . '_' . bin2hex(random_bytes(4));
                                 
                                 $deviceDetails = [
-                                    '📱 IP Address' => $row['scan_ip'] ?: 'Not captured',
-                                    '🌐 Browser' => $deviceInfo['browser'] ?? ($browserInfo['name'] ?? 'Unknown'),
-                                    '💻 OS' => $deviceInfo['os_name'] ?? ($browserInfo['platform'] ?? 'Unknown'),
-                                    '📦 Device Type' => $deviceInfo['device_type'] ?? 'Unknown',
-                                    '📺 Screen' => $deviceInfo['screen_resolution'] ?? 'Unknown',
-                                    '🎨 DPI' => $deviceInfo['screen_dpi'] ?? 'N/A',
-                                    '💾 Memory' => $deviceInfo['device_memory'] ?? 'Unknown',
-                                    '⚙️ CPU Cores' => $deviceInfo['cpu_cores'] ?? 'Unknown',
-                                    '📡 Connection' => $deviceInfo['connection_type'] ?? 'Unknown',
-                                    '🗣️ Language' => $deviceInfo['language'] ?? 'Unknown',
-                                    '🕐 Timezone' => $deviceInfo['timezone'] ?? 'Unknown',
-                                    '📍 Location' => $row['scan_address'] ?: 'Not captured'
+                                    'IP Address' => $row['scan_ip'] ?: 'Not captured',
+                                    'Browser' => $deviceInfo['browser'] ?? ($browserInfo['name'] ?? 'Unknown'),
+                                    'OS' => $deviceInfo['os_name'] ?? ($browserInfo['platform'] ?? 'Unknown'),
+                                    'Device Type' => $deviceInfo['device_type'] ?? 'Unknown',
+                                    'Platform' => $deviceInfo['platform'] ?? ($browserInfo['platform'] ?? 'Unknown'),
+                                    'Screen' => $deviceInfo['screen_resolution'] ?? 'Unknown',
+                                    'DPI' => $deviceInfo['screen_dpi'] ?? 'N/A',
+                                    'Memory' => $deviceInfo['device_memory'] ?? 'Unknown',
+                                    'CPU Cores' => $deviceInfo['cpu_cores'] ?? 'Unknown',
+                                    'Connection' => $deviceInfo['connection_type'] ?? 'Unknown',
+                                    'Language' => $deviceInfo['language'] ?? 'Unknown',
+                                    'Timezone' => $deviceInfo['timezone'] ?? 'Unknown',
+                                    'Location' => $row['scan_address'] ?: 'Not captured'
                                 ];
                                 ?>
                                 <tr>
@@ -872,16 +1108,24 @@ renderAppShellStart($conn, [
                                         </span>
                                     </td>
                                     <td>
-                                        <div class="device-info-cell"
-                                             id="<?php echo $rowId; ?>"
-                                             onclick="toggleAttendanceDeviceTooltip(this, '<?php echo $rowId; ?>')"
-                                             onmouseover="showAttendanceDeviceTooltip(this, '<?php echo $rowId; ?>')"
-                                             onmouseout="hideAttendanceDeviceTooltip()"
-                                             role="button"
-                                             tabindex="0"
-                                             style="cursor: pointer;">
+                                        <div class="device-info-cell" id="<?php echo $rowId; ?>">
                                             <i class="fas fa-circle-info" aria-hidden="true"></i>
                                             <span><?php echo h($deviceText); ?></span>
+                                        </div>
+                                        <button type="button"
+                                                class="device-detail-toggle"
+                                                aria-expanded="false"
+                                                aria-controls="<?php echo $rowId; ?>_details"
+                                                onclick="toggleDeviceDetails('<?php echo $rowId; ?>_details', this)">
+                                            View details
+                                        </button>
+                                        <div class="device-details-panel" id="<?php echo $rowId; ?>_details">
+                                            <?php foreach ($deviceDetails as $label => $value): ?>
+                                                <div class="device-detail-row">
+                                                    <span class="device-detail-label"><?php echo h($label); ?></span>
+                                                    <span class="device-detail-value"><?php echo h($value); ?></span>
+                                                </div>
+                                            <?php endforeach; ?>
                                         </div>
                                     </td>
                                     <td>
@@ -898,10 +1142,6 @@ renderAppShellStart($conn, [
                                     </td>
                                 </tr>
                                 <?php endif; ?>
-                                <script>
-                                    attendanceDeviceDetailsMap = attendanceDeviceDetailsMap || {};
-                                    attendanceDeviceDetailsMap['<?php echo $rowId; ?>'] = <?php echo json_encode($deviceDetails); ?>;
-                                </script>
                             <?php endwhile; ?>
                         <?php else: ?>
                             <tr>
@@ -914,13 +1154,14 @@ renderAppShellStart($conn, [
                     </tbody>
                 </table>
                 
+                <div id="devicePopupBackdrop" class="device-popup-backdrop" onclick="closeDeviceDetails()"></div>
                 <!-- Device Tooltip -->
                 <div id="deviceTooltip" class="device-tooltip" style="display: none;"></div>
             </div>
         </div>
 
         <!-- Charts Section -->
-        <?php if (count($browserStats) > 0): ?>
+        <?php if ($canViewAllAttendance && count($browserStats) > 0): ?>
         <div class="chart-container">
             <div class="chart-title">🌐 Browser Distribution</div>
             <canvas id="browserChart"></canvas>
@@ -929,6 +1170,19 @@ renderAppShellStart($conn, [
 
     <?php else: ?>
         <!-- Events Overview View -->
+        <?php if ($user_role !== 'attendee'): ?>
+            <div class="view-toggle">
+                <div class="view-btn active">
+                    <i class="fas fa-calendar-check"></i>
+                    <span class="btn-text">
+                        <strong>Managed Events</strong>
+                        <span>View attendance records only</span>
+                    </span>
+                    <span class="count-badge"><?php echo (int) $createdCount; ?></span>
+                </div>
+            </div>
+        <?php endif; ?>
+
         <?php if ($view === 'attended'): ?>
             <!-- Events Attended -->
             <div class="events-grid">
@@ -1026,7 +1280,7 @@ renderAppShellStart($conn, [
     <?php endif; ?>
 </div>
 
-<?php if (count($browserStats) > 0): ?>
+<?php if ($canViewAllAttendance && count($browserStats) > 0): ?>
 <script>
 // Initialize browser chart
 let browserChart;
@@ -1167,6 +1421,43 @@ document.addEventListener('DOMContentLoaded', function() {
 // Device Tooltip Functions
 let attendanceDeviceDetailsMap = {};
 
+function toggleDeviceDetails(panelId, button) {
+    const panel = document.getElementById(panelId);
+    if (!panel) {
+        return;
+    }
+
+    const shouldOpen = !panel.classList.contains('show');
+    closeDeviceDetails();
+
+    if (shouldOpen) {
+        panel.classList.add('show');
+        const backdrop = document.getElementById('devicePopupBackdrop');
+        if (backdrop) {
+            backdrop.classList.add('show');
+        }
+        if (button) {
+            button.setAttribute('aria-expanded', 'true');
+            button.textContent = 'Hide details';
+        }
+    }
+}
+
+function closeDeviceDetails() {
+    document.querySelectorAll('.device-details-panel.show').forEach(function(panel) {
+        panel.classList.remove('show');
+    });
+    document.querySelectorAll('.device-detail-toggle[aria-expanded="true"]').forEach(function(button) {
+        button.setAttribute('aria-expanded', 'false');
+        button.textContent = 'View details';
+    });
+
+    const backdrop = document.getElementById('devicePopupBackdrop');
+    if (backdrop) {
+        backdrop.classList.remove('show');
+    }
+}
+
 function escapeHtmlAttendance(text) {
     const map = {
         '&': '&amp;',
@@ -1284,11 +1575,19 @@ document.addEventListener('DOMContentLoaded', function() {
         cell.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                const rowId = this.id;
-                toggleAttendanceDeviceTooltip(this, rowId);
+                const button = this.parentElement.querySelector('.device-detail-toggle');
+                if (button) {
+                    button.click();
+                }
             }
         });
     });
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        closeDeviceDetails();
+    }
 });
 
 // Mobile touch interactions
@@ -1316,6 +1615,53 @@ if ('ontouchstart' in window) {
         });
     });
 }
+</script>
+<?php endif; ?>
+
+<?php if ($event_id > 0): ?>
+<script>
+window.toggleDeviceDetails = window.toggleDeviceDetails || function(panelId, button) {
+    const panel = document.getElementById(panelId);
+    if (!panel) {
+        return;
+    }
+
+    const shouldOpen = !panel.classList.contains('show');
+    window.closeDeviceDetails();
+
+    if (shouldOpen) {
+        panel.classList.add('show');
+        const backdrop = document.getElementById('devicePopupBackdrop');
+        if (backdrop) {
+            backdrop.classList.add('show');
+        }
+        if (button) {
+            button.setAttribute('aria-expanded', 'true');
+            button.textContent = 'Hide details';
+        }
+    }
+};
+
+window.closeDeviceDetails = window.closeDeviceDetails || function() {
+    document.querySelectorAll('.device-details-panel.show').forEach(function(panel) {
+        panel.classList.remove('show');
+    });
+    document.querySelectorAll('.device-detail-toggle[aria-expanded="true"]').forEach(function(button) {
+        button.setAttribute('aria-expanded', 'false');
+        button.textContent = 'View details';
+    });
+
+    const backdrop = document.getElementById('devicePopupBackdrop');
+    if (backdrop) {
+        backdrop.classList.remove('show');
+    }
+};
+
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        window.closeDeviceDetails();
+    }
+});
 </script>
 <?php endif; ?>
 

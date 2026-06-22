@@ -1,8 +1,0 @@
-<?php
-/**
- * Nakili faili hii kuwa: includes/config.local.php
- * Weka API key yako ya Google Maps (usishiriki hadharani / usi-commit kwenye git).
- *
- * Google Cloud: wezesha Maps JavaScript API + Places API
- */
-define('GOOGLE_MAPS_API_KEY', 'AIzaSyBxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx');

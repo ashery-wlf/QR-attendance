@@ -218,7 +218,7 @@
             autocomplete.addListener("place_changed", function () {
                 const place = autocomplete.getPlace();
                 if (!place.geometry || !place.geometry.location) {
-                    setStatus(statusEl, "Chagua mahali kutoka mapendekezo ya Google.");
+                    setStatus(statusEl, "Choose location ya Google.");
                     return;
                 }
                 setPosition(
@@ -230,7 +230,7 @@
                         reverseGeocode: false
                     }
                 );
-                setStatus(statusEl, "Mahali limepatikana kwenye Google Maps.");
+                setStatus(statusEl, "Location found on Google Maps.");
             });
         }
 
@@ -238,13 +238,13 @@
             findButton.addEventListener("click", function () {
                 const query = (searchInput ? searchInput.value : "").trim();
                 if (!query) {
-                    setStatus(statusEl, "Andika jina la mahali kwanza.");
+                    setStatus(statusEl, "Write name of location.");
                     return;
                 }
-                setStatus(statusEl, "Inatafuta kwenye Google Maps...");
+                setStatus(statusEl, "Search on Google Maps...");
                 geocoder.geocode({ address: query }, function (results, status) {
                     if (status !== "OK" || !results[0]) {
-                        setStatus(statusEl, "Mahali halijapatikana kwenye Google Maps.");
+                        setStatus(statusEl, "Location not found on Google Maps.");
                         return;
                     }
                     const loc = results[0].geometry.location;
@@ -252,7 +252,7 @@
                         address: results[0].formatted_address,
                         reverseGeocode: false
                     });
-                    setStatus(statusEl, "Mahali limepatikana kwenye Google Maps.");
+                    setStatus(statusEl, "Location found on Google Maps.");
                 });
             });
         }
@@ -260,17 +260,17 @@
         if (currentButton) {
             currentButton.addEventListener("click", function () {
                 if (!navigator.geolocation) {
-                    setStatus(statusEl, "Browser haitambui GPS.");
+                    setStatus(statusEl, "Browser dosn't know GPS.");
                     return;
                 }
-                setStatus(statusEl, "Inachukua eneo lako...");
+                setStatus(statusEl, "Its Takes your location...");
                 navigator.geolocation.getCurrentPosition(
                     function (position) {
                         setPosition(position.coords.latitude, position.coords.longitude, 16, { reverseGeocode: true });
-                        setStatus(statusEl, "Eneo la sasa limewekwa.");
+                        setStatus(statusEl, "Location saved.");
                     },
                     function () {
-                        setStatus(statusEl, "Imeshindwa kupata eneo lako.");
+                        setStatus(statusEl, "Isn't take your location.");
                     },
                     { enableHighAccuracy: true, timeout: 12000 }
                 );

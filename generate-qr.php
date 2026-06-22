@@ -30,8 +30,7 @@ if (isset($_GET['token'])) {
     ]);
     exit();
 }
-$attendanceOpenTime = appEventTimeOrDefault($event['attendance_start'] ?? '', $event['time'] ?? '');
-$attendanceCloseTime = appEventTimeOrDefault($event['attendance_end'] ?? '', appEventTimeOrDefault($event['end_time'] ?? '', $event['time'] ?? ''));
+[$attendanceOpenTime, $attendanceCloseTime] = appAutomaticAttendanceWindow($event['time'] ?? '');
 ?>
 <?php
 $pageCss = <<<'CSS'
@@ -216,6 +215,6 @@ function refreshQr() {
 }
 
 refreshQr();
-setInterval(refreshQr, 15000);
+/* setInterval(refreshQr, 15000); */
 </script>
 <?php renderAppShellEnd("qr"); ?>

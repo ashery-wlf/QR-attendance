@@ -43,7 +43,12 @@ if ((int) $event['organization_id'] !== $user_org_id) {
 
 $windowState = attendanceWindowState($event);
 if ($windowState !== 'open') {
-    echo "Attendance window is not open.";
+    [$openTimeValue, $closeTimeValue] = appAutomaticAttendanceWindow($event['time'] ?? '');
+    $openTime = formatEventTime($openTimeValue);
+    $closeTime = formatEventTime($closeTimeValue);
+    echo $windowState === 'before'
+        ? "Attendance has not opened yet. It opens at $openTime."
+        : "Attendance window is closed. It closed at $closeTime.";
     exit;
 }
 
@@ -76,9 +81,15 @@ if (!$validQr && !$validCode) {
 // Get comprehensive user information
 $userResult = $conn->query("SELECT name, email, phone, attendee_type FROM users WHERE id=$user_id LIMIT 1");
 $user = $userResult && $userResult->num_rows > 0 ? $userResult->fetch_assoc() : ['name' => '', 'email' => '', 'phone' => '', 'attendee_type' => ''];
+$userAttendeeType = $user['attendee_type'] ?? '';
+
+if (!in_array($userAttendeeType, ['student', 'staff', 'guest'], true)) {
+    echo "Complete your profile first. Select whether you are a student, staff, or guest before scanning attendance.";
+    exit;
+}
 
 $targetAudience = $event['target_audience'] ?: 'all';
-if (in_array($targetAudience, ['student', 'staff', 'guest'], true) && ($user['attendee_type'] ?? '') !== $targetAudience) {
+if (in_array($targetAudience, ['student', 'staff', 'guest'], true) && $userAttendeeType !== $targetAudience) {
     echo "This attendance is only for " . ucfirst($targetAudience) . " attendees.";
     exit;
 }
@@ -117,9 +128,21 @@ $notes = '';
 
 // Check if user is too far from venue
 $max_distance_km = isset($event['max_distance_km']) ? (float) $event['max_distance_km'] : 0.0;
-if ($distance_from_venue !== null && $max_distance_km > 0 && $distance_from_venue > $max_distance_km) {
-    $attendance_status = 'absent';
-    $notes = "User was " . number_format($distance_from_venue, 2) . "km from venue (max allowed: " . $max_distance_km . "km)";
+if ($max_distance_km > 0) {
+    if (empty($venue_lat) || empty($venue_lng)) {
+        echo "Attendance location limit is enabled, but this event has no venue coordinates.";
+        exit;
+    }
+
+    if (empty($scan_lat) || empty($scan_lng) || $distance_from_venue === null) {
+        echo "Location is required for this event. Allow location access and try again.";
+        exit;
+    }
+
+    if ($distance_from_venue > $max_distance_km) {
+        echo "You are too far from the venue. Distance: " . number_format($distance_from_venue, 2) . "km, allowed: " . number_format($max_distance_km, 2) . "km.";
+        exit;
+    }
 }
 
 // Check if user is late
@@ -169,7 +192,7 @@ $scan_lng_value = !empty($scan_lng) ? floatval($scan_lng) : null;
 
 $phone_matched_value = $phone_matched ? 1 : 0;
 
-$stmt->bind_param("iissssddsssdissss", 
+$stmt->bind_param("iissssddsssdsisss", 
     $event_id, 
     $user_id, 
     $user['name'], 

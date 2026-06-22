@@ -180,6 +180,9 @@ function dashboardStatusBadge($row)
     return ['Available', 'available'];
 }
 
+// Get organization branding
+$branding = appGetCurrentOrganizationBranding($conn);
+
 $firstCodeResult = $conn->query("
     SELECT access_code
     FROM events
@@ -193,6 +196,11 @@ $latestAccessCode = $firstCodeResult && $firstCodeResult->num_rows > 0 ? $firstC
 
 $pageCss = <<<'CSS'
 <style>
+:root {
+    --primary: <? php echo htmlspecialchars($branding['brand_color']); ?>;
+    --bg: <? php echo htmlspecialchars($branding['background_color']); ?>;
+}
+
 .stats-grid{
     display:grid;
     grid-template-columns:repeat(3, minmax(0, 1fr));

@@ -41,6 +41,21 @@ if (!$isRegistered) {
     exit();
 }
 
+$userTypeResult = $conn->query("SELECT attendee_type FROM users WHERE id=$user_id LIMIT 1");
+$userTypeRow = $userTypeResult && $userTypeResult->num_rows > 0 ? $userTypeResult->fetch_assoc() : ['attendee_type' => ''];
+$userAttendeeType = $userTypeRow['attendee_type'] ?? '';
+
+if (!in_array($userAttendeeType, ['student', 'staff', 'guest'], true)) {
+    echo "Complete your profile first. Select whether you are a student, staff, or guest before scanning attendance.";
+    exit();
+}
+
+$targetAudience = $event['target_audience'] ?: 'all';
+if (in_array($targetAudience, ['student', 'staff', 'guest'], true) && $userAttendeeType !== $targetAudience) {
+    echo "This attendance is only for " . ucfirst($targetAudience) . " attendees.";
+    exit();
+}
+
 if (attendanceWindowState($event) !== 'open') {
     echo "Attendance window is closed.";
     exit();
