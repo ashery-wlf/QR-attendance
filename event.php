@@ -89,6 +89,7 @@ if (isset($_POST['save_settings']) && $isAdmin) {
     $date = $_POST['date'] ?? "";
     $time = $_POST['time'] ?? "";
     $end_time = $_POST['end_time'] ?? "";
+    [$date, $time, $end_time] = appNormalizeEventScheduleForQrWindow($date, $time, $end_time);
     [$attendance_start, $attendance_end] = appAutomaticAttendanceWindow($time);
     $registration_mode = $_POST['registration_mode'] ?? "self";
     $venue_id = (int) ($_POST['venue_id'] ?? 0);
@@ -1030,7 +1031,7 @@ renderAppShellStart($conn, [
 
                 <div class="field full">
                     <label>Automatic QR Attendance Window</label>
-                    <div class="inline-note">The live QR opens 10 minutes before the event start time and closes 20 minutes after the event starts.</div>
+                    <div class="inline-note">The live QR opens 30 minutes before the event start time and closes 10 minutes after the event starts.</div>
                 </div>
 
                 <?php if ($organizerVenueOnly): ?>
@@ -1314,9 +1315,30 @@ renderAppShellStart($conn, [
         return now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
     }
 
-    function currentTimeValue() {
-        const now = new Date();
-        return pad(now.getHours()) + ":" + pad(now.getMinutes());
+    function dateValue(date) {
+        return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate());
+    }
+
+    function timeValue(date) {
+        return pad(date.getHours()) + ":" + pad(date.getMinutes());
+    }
+
+    function minimumStartDateTime() {
+        const minimum = new Date();
+        minimum.setMinutes(minimum.getMinutes() + 30);
+        minimum.setSeconds(0, 0);
+        return minimum;
+    }
+
+    function selectedDateTime(dateText, timeText) {
+        if (!dateText || !timeText) {
+            return null;
+        }
+
+        const parts = timeText.split(":").map(Number);
+        const selected = new Date(dateText + "T00:00:00");
+        selected.setHours(parts[0] || 0, parts[1] || 0, 0, 0);
+        return Number.isNaN(selected.getTime()) ? null : selected;
     }
 
     function addMinutes(time, minutes) {
@@ -1332,26 +1354,34 @@ renderAppShellStart($conn, [
     }
 
     function syncTimeLimits() {
-        const today = todayValue();
-        const nowTime = currentTimeValue();
-        const isToday = dateInput && dateInput.value === today;
-        const startMin = isToday ? nowTime : "";
+        const minimum = minimumStartDateTime();
+        const minimumDate = dateValue(minimum);
+        const minimumTime = timeValue(minimum);
+
+        if (dateInput && dateInput.value && dateInput.value < minimumDate) {
+            dateInput.value = minimumDate;
+        }
+
+        const isMinimumDate = dateInput && dateInput.value === minimumDate;
+        const startMin = isMinimumDate ? minimumTime : "";
         const startValue = startInput ? startInput.value : "";
-        const endMin = startValue ? addMinutes(startValue, 5) : startMin;
 
         if (dateInput) {
-            dateInput.min = today;
+            dateInput.min = minimumDate;
         }
         if (startInput) {
             startInput.min = startMin;
-            if (startMin && startInput.value && startInput.value < startMin) {
-                startInput.value = startMin;
+            const selectedStart = selectedDateTime(dateInput ? dateInput.value : "", startInput.value);
+            if (selectedStart && selectedStart < minimum) {
+                dateInput.value = minimumDate;
+                startInput.value = minimumTime;
             }
         }
         if (endInput) {
-            endInput.min = endMin;
-            if (endInput.value && endMin && endInput.value < endMin) {
-                endInput.value = endMin;
+            const adjustedEndMin = startInput && startInput.value ? addMinutes(startInput.value, 5) : startMin;
+            endInput.min = adjustedEndMin;
+            if (endInput.value && adjustedEndMin && endInput.value < adjustedEndMin) {
+                endInput.value = addMinutes(startInput.value, 60);
             }
         }
     }

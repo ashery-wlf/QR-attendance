@@ -150,11 +150,9 @@ $event_start_time = new DateTime($event['date'] . ' ' . $event['time']);
 $current_time = new DateTime();
 if ($current_time > $event_start_time) {
     $time_diff = $current_time->getTimestamp() - $event_start_time->getTimestamp();
-    $minutes_late = floor($time_diff / 60);
-    if ($minutes_late > 15) { // Consider late if more than 15 minutes
-        $attendance_status = 'late';
-        $notes .= ($notes ? ' | ' : '') . "Arrived " . $minutes_late . " minutes late";
-    }
+    $minutes_late = max(1, (int) ceil($time_diff / 60));
+    $attendance_status = 'late';
+    $notes .= ($notes ? ' | ' : '') . "Arrived " . $minutes_late . " minutes late";
 }
 
 // Phone matching verification

@@ -163,7 +163,7 @@ if ($event_id > 0) {
                                 <td><?php echo attendanceExcelText(ucfirst($rowAttendeeType)); ?></td>
                                 <td><?php echo attendanceExcelText($row['reg_no']); ?></td>
                                 <td><?php echo attendanceExcelText($row['department']); ?></td>
-                                <td><?php echo attendanceExcelText(ucfirst($row['attendance_status'] ?? 'present')); ?></td>
+                                <td><?php echo attendanceExcelText(attendanceStatusLabel($row['attendance_status'] ?? 'present', $row['notes'] ?? '')); ?></td>
                                 <td><?php echo attendanceExcelText($checkInTimestamp ? date('Y-m-d', $checkInTimestamp) : ''); ?></td>
                                 <td><?php echo attendanceExcelText($checkInTimestamp ? date('H:i:s', $checkInTimestamp) : ''); ?></td>
                                 <td><?php echo attendanceExcelText($row['distance_from_venue'] !== null ? number_format((float) $row['distance_from_venue'], 2) . ' km' : ''); ?></td>
@@ -1103,7 +1103,7 @@ renderAppShellStart($conn, [
                                     <td><?php echo h($typeInfo); ?></td>
                                     <td>
                                         <span class="badge badge-<?php echo $status; ?>">
-                                            <?php echo ucfirst($status); ?>
+                                            <?php echo h(attendanceStatusLabel($status, $row['notes'] ?? '')); ?>
                                             <?php if ($row['phone_matched']): ?> ✅<?php endif; ?>
                                         </span>
                                     </td>

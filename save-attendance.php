@@ -100,9 +100,19 @@ if ($participantInfo && $participantInfo->num_rows > 0) {
 $scanLatValue = is_numeric($scan_lat) ? (float) $scan_lat : null;
 $scanLngValue = is_numeric($scan_lng) ? (float) $scan_lng : null;
 $safeScanAddress = $scan_address;
+$attendanceStatus = 'present';
+$notes = '';
+$eventStartTime = new DateTime($event['date'] . ' ' . $event['time']);
+$currentTime = new DateTime();
+if ($currentTime > $eventStartTime) {
+    $minutesLate = max(1, (int) ceil(($currentTime->getTimestamp() - $eventStartTime->getTimestamp()) / 60));
+    $attendanceStatus = 'late';
+    $notes = "Arrived " . $minutesLate . " minutes late";
+}
+$checkInTime = $currentTime->format('H:i:s');
 
-$stmt = $conn->prepare("INSERT INTO attendance(user_id, event_id, device_info, user_name, user_email, user_phone, time, scan_lat, scan_lng, scan_address) VALUES(?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)");
-$stmt->bind_param("iissssdds", $user_id, $event_id, $deviceInfo, $user_name, $user_email, $user_phone, $scanLatValue, $scanLngValue, $safeScanAddress);
+$stmt = $conn->prepare("INSERT INTO attendance(user_id, event_id, device_info, user_name, user_email, user_phone, time, scan_lat, scan_lng, scan_address, attendance_status, check_in_time, notes) VALUES(?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?)");
+$stmt->bind_param("iissssddssss", $user_id, $event_id, $deviceInfo, $user_name, $user_email, $user_phone, $scanLatValue, $scanLngValue, $safeScanAddress, $attendanceStatus, $checkInTime, $notes);
 
 if ($stmt->execute()) {
     echo "Attendance recorded successfully.";

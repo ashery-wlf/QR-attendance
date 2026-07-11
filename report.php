@@ -192,7 +192,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
                         <td><?php echo reportExcelText(ucfirst($attendeeType)); ?></td>
                         <td><?php echo reportExcelText($row['reg_no']); ?></td>
                         <td><?php echo reportExcelText($row['department']); ?></td>
-                        <td><?php echo reportExcelText(ucfirst($row['attendance_status'] ?? 'present')); ?></td>
+                        <td><?php echo reportExcelText(attendanceStatusLabel($row['attendance_status'] ?? 'present', $row['notes'] ?? '')); ?></td>
                         <td><?php echo reportExcelText($checkInTimestamp ? date('Y-m-d', $checkInTimestamp) : ''); ?></td>
                         <td><?php echo reportExcelText($checkInTimestamp ? date('H:i:s', $checkInTimestamp) : ''); ?></td>
                         <td><?php echo reportExcelText($row['distance_from_venue'] !== null ? number_format((float) $row['distance_from_venue'], 2) . ' km' : ''); ?></td>
@@ -611,7 +611,7 @@ renderAppShellStart($conn, [
 </div>
 
 <div class="excel-export-card">
-    <h3>Download Excel Attendance Report</h3>
+    <h3>Download Attendance Report</h3>
     <form method="GET" action="report.php" class="excel-export-form">
         <input type="hidden" name="export" value="excel">
         <label>
@@ -639,7 +639,7 @@ renderAppShellStart($conn, [
                 <option value="guest" <?php echo $selectedType === 'guest' ? 'selected' : ''; ?>>Guests only</option>
             </select>
         </label>
-        <button type="submit" class="excel-download-btn">Download Excel</button>
+        <button type="submit" class="excel-download-btn">Download Report</button>
     </form>
 </div>
 
@@ -811,7 +811,7 @@ renderAppShellStart($conn, [
                     <td><?php echo h($typeInfo); ?></td>
                     <td>
                         <span class="badge <?php echo $statusClass; ?>">
-                            <?php echo ucfirst(h($record['attendance_status'] ?? 'present')); ?>
+                            <?php echo h(attendanceStatusLabel($record['attendance_status'] ?? 'present', $record['notes'] ?? '')); ?>
                             <?php if ($record['phone_matched']): ?> ✅<?php endif; ?>
                         </span>
                     </td>

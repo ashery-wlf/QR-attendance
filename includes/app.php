@@ -1210,9 +1210,60 @@ function appAutomaticAttendanceWindow($eventTime)
     }
 
     return [
-        date('H:i', $base - 600),
-        date('H:i', $base + 1200),
+        date('H:i', $base - 1800),
+        date('H:i', $base + 600),
     ];
+}
+
+function appMinimumEventStartTimestamp()
+{
+    return time() + 1800;
+}
+
+function appNormalizeEventStartForQrWindow($date, $time)
+{
+    $date = trim((string) $date);
+    $time = appTimeValue($time);
+
+    if ($date === '' || $time === '') {
+        return [$date, $time];
+    }
+
+    $start = strtotime($date . ' ' . $time);
+    $minimumStart = appMinimumEventStartTimestamp();
+
+    if ($start === false || $start >= $minimumStart) {
+        return [$date, $time];
+    }
+
+    return [
+        date('Y-m-d', $minimumStart),
+        date('H:i', $minimumStart),
+    ];
+}
+
+function appNormalizeEventScheduleForQrWindow($date, $time, $endTime)
+{
+    $date = trim((string) $date);
+    $time = appTimeValue($time);
+    $endTime = appTimeValue($endTime);
+    $originalStart = ($date !== '' && $time !== '') ? strtotime($date . ' ' . $time) : false;
+    $originalEnd = ($date !== '' && $endTime !== '') ? strtotime($date . ' ' . $endTime) : false;
+
+    [$normalizedDate, $normalizedTime] = appNormalizeEventStartForQrWindow($date, $time);
+    $normalizedStart = ($normalizedDate !== '' && $normalizedTime !== '') ? strtotime($normalizedDate . ' ' . $normalizedTime) : false;
+
+    if ($endTime !== '' && $normalizedStart !== false) {
+        $normalizedEnd = strtotime($normalizedDate . ' ' . $endTime);
+        if ($normalizedEnd === false || $normalizedEnd <= $normalizedStart) {
+            $duration = ($originalStart !== false && $originalEnd !== false && $originalEnd > $originalStart)
+                ? $originalEnd - $originalStart
+                : 3600;
+            $endTime = date('H:i', $normalizedStart + max(300, $duration));
+        }
+    }
+
+    return [$normalizedDate, $normalizedTime, $endTime];
 }
 
 function appEventScheduleError($date, $time, $endTime, $attendanceStart, $attendanceEnd, $allowPastStart = false)
@@ -1234,8 +1285,8 @@ function appEventScheduleError($date, $time, $endTime, $attendanceStart, $attend
 
     $currentMinute = strtotime(date('Y-m-d H:i:00'));
 
-    if (!$allowPastStart && $start < $currentMinute) {
-        return "Event start time cannot be in the past.";
+    if (!$allowPastStart && $start < $currentMinute + 1800) {
+        return "Event start time must be at least 30 minutes from now.";
     }
 
     if ($endTime === '') {
@@ -1269,7 +1320,7 @@ function attendanceStartDateTime($event)
         return false;
     }
     $eventStart = strtotime($event['date'] . ' ' . $event['time']);
-    return $eventStart === false ? false : $eventStart - 600;
+    return $eventStart === false ? false : $eventStart - 1800;
 }
 
 function attendanceEndDateTime($event)
@@ -1278,7 +1329,7 @@ function attendanceEndDateTime($event)
         return false;
     }
     $eventStart = strtotime($event['date'] . ' ' . $event['time']);
-    return $eventStart === false ? false : $eventStart + 1200;
+    return $eventStart === false ? false : $eventStart + 600;
 }
 
 function attendanceWindowState($event)
@@ -1308,6 +1359,21 @@ function attendanceWindowState($event)
     }
 
     return 'open';
+}
+
+function attendanceStatusLabel($status, $notes = '')
+{
+    $status = trim((string) $status);
+    if ($status === '') {
+        $status = 'present';
+    }
+
+    $label = ucfirst($status);
+    if ($status === 'late' && preg_match('/Arrived\s+(\d+)\s+minutes?\s+late/i', (string) $notes, $matches)) {
+        $label .= ' (' . (int) $matches[1] . ' min)';
+    }
+
+    return $label;
 }
 
 function eventLifecycleStatus($event)

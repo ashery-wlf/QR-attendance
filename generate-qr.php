@@ -24,13 +24,10 @@ if (isset($_GET['token'])) {
     header("Content-Type: application/json");
     echo json_encode([
         "payload" => $window === "open" ? buildQrPayload($event_id) : "",
-        "code" => $window === "open" ? buildAttendanceCode($event_id) : "",
         "window" => $window,
-        "generated_at" => date("H:i:s"),
     ]);
     exit();
 }
-[$attendanceOpenTime, $attendanceCloseTime] = appAutomaticAttendanceWindow($event['time'] ?? '');
 ?>
 <?php
 $pageCss = <<<'CSS'
@@ -102,34 +99,6 @@ $pageCss = <<<'CSS'
     font-weight:700;
 }
 
-.app-page .shell .meta{
-    margin-top:12px;
-    display:flex;
-    justify-content:center;
-    gap:10px;
-    flex-wrap:wrap;
-    color:rgba(255,255,255,0.84);
-    font-size:14px;
-}
-
-.app-page .shell .manual-code{
-    margin:12px auto 0;
-    display:none;
-    width:max-content;
-    max-width:100%;
-    padding:10px 16px;
-    border-radius:14px;
-    background:rgba(255,255,255,0.14);
-    border:1px solid rgba(255,255,255,0.18);
-    font-size:28px;
-    letter-spacing:0.16em;
-    font-weight:900;
-}
-
-.app-page .shell .manual-code.show{
-    display:block;
-}
-
 .app-page .shell a{
     display:inline-block;
     margin-top:14px;
@@ -144,23 +113,17 @@ renderAppShellStart($conn, [
     "title" => "Live Attendance QR",
     "active" => "qr",
     "page_title" => "Live Attendance QR",
-    "page_subtitle" => "Display this QR on the admin screen. It refreshes automatically for safer attendance scanning.",
+    "page_subtitle" => "Live attendance QR",
     "search_placeholder" => "Search events...",
     "extra_head" => $pageCss,
 ]);
 ?>
 <div class="shell">
     <h1><?php echo h($event['name']); ?></h1>
-    <p>Display this live QR on the admin screen. It refreshes automatically for safer attendance scanning.</p>
 
     <div id="qrcode"></div>
     <div class="qr-closed" id="qrClosed">Attendance time is over. Live QR is no longer available.</div>
-    <div class="manual-code" id="manualCode"></div>
     <div class="status" id="status">Preparing live QR...</div>
-    <div class="meta">
-        <span>Attendance window: <?php echo h(formatEventTime($attendanceOpenTime)); ?> - <?php echo h(formatEventTime($attendanceCloseTime)); ?></span>
-        <span id="generatedAt"></span>
-    </div>
 
     <a href="event.php?id=<?php echo $event_id; ?>">Back to event</a>
 </div>
@@ -171,11 +134,9 @@ let qr;
 function renderQr(payload) {
     const box = document.getElementById("qrcode");
     const closedBox = document.getElementById("qrClosed");
-    const codeBox = document.getElementById("manualCode");
     box.innerHTML = "";
     box.classList.remove("hidden");
     closedBox.classList.remove("show");
-    codeBox.classList.add("show");
     qr = new QRCode(box, {
         text: payload,
         width: 208,
@@ -186,13 +147,10 @@ function renderQr(payload) {
 function hideQr(message) {
     const box = document.getElementById("qrcode");
     const closedBox = document.getElementById("qrClosed");
-    const codeBox = document.getElementById("manualCode");
     box.innerHTML = "";
     box.classList.add("hidden");
     closedBox.classList.add("show");
     closedBox.textContent = message;
-    codeBox.classList.remove("show");
-    codeBox.textContent = "";
 }
 
 function refreshQr() {
@@ -201,7 +159,6 @@ function refreshQr() {
         .then(data => {
             if (data.window === "open" && data.payload) {
                 renderQr(data.payload);
-                document.getElementById("manualCode").textContent = data.code || "";
                 document.getElementById("status").textContent = "Attendance is open. QR is live.";
             } else if (data.window === "before") {
                 hideQr("Attendance has not started yet. QR will appear automatically when scan time begins.");
@@ -210,11 +167,10 @@ function refreshQr() {
                 hideQr("Attendance time is over. Live QR is no longer available.");
                 document.getElementById("status").textContent = "Attendance window has closed.";
             }
-            document.getElementById("generatedAt").textContent = "Updated at " + data.generated_at;
         });
 }
 
 refreshQr();
-/* setInterval(refreshQr, 15000); */
+setInterval(refreshQr, 15000);
 </script>
 <?php renderAppShellEnd("qr"); ?>

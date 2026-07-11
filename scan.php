@@ -316,11 +316,7 @@ renderAppShellStart($conn, [
         <div id="reader"></div>
         <div class="manual-box">
             <h2>Fallback options</h2>
-            <p>If camera access fails on local network, type the live attendance code shown below the QR or upload a QR image.</p>
-            <div class="manual-row">
-                <input type="text" id="attendanceCode" inputmode="text" maxlength="8" placeholder="Enter live code">
-                <button type="button" id="submitCode">Submit Code</button>
-            </div>
+            <p>If camera access fails on local network, upload a QR image.</p>
             <div class="upload-row">
                 <input type="file" id="qrImageInput" accept="image/*">
             </div>
@@ -549,43 +545,6 @@ async function submitAttendance(token) {
     });
 }
 
-async function submitAttendanceCode(code) {
-    if (scannerBusy) {
-        return;
-    }
-    scannerBusy = true;
-
-    await ensureScanLocation();
-    const deviceInfo = getDeviceInfo();
-    const browserInfo = getBrowserInfo();
-
-    fetch("attendance-submit.php", {
-        method: "POST",
-        headers: {"Content-Type": "application/x-www-form-urlencoded"},
-        body: "event_id=<?php echo $event_id; ?>&attendance_code=" + encodeURIComponent(code)
-            + "&scan_lat=" + encodeURIComponent(scanGeo.lat)
-            + "&scan_lng=" + encodeURIComponent(scanGeo.lng)
-            + "&scan_address=" + encodeURIComponent(scanGeo.address)
-            + "&device_info=" + encodeURIComponent(JSON.stringify(deviceInfo))
-            + "&browser_info=" + encodeURIComponent(JSON.stringify(browserInfo))
-    })
-    .then(res => res.text())
-    .then(data => {
-        const lower = data.toLowerCase();
-        const isError = lower.includes("not") || lower.includes("wrong") || lower.includes("closed");
-        setResult(data, isError);
-        if (!isError || lower.includes("already")) {
-            stopScanner();
-            return;
-        }
-        scannerBusy = false;
-    })
-    .catch(() => {
-        setResult("Could not submit attendance right now.", true);
-        scannerBusy = false;
-    });
-}
-
 function onScanSuccess(decodedText) {
     submitAttendance(decodedText);
 }
@@ -689,15 +648,6 @@ document.getElementById("startCamera").addEventListener("click", startCameraScan
 
 document.addEventListener("DOMContentLoaded", function() {
     startCameraScan();
-});
-
-document.getElementById("submitCode").addEventListener("click", function() {
-    const code = document.getElementById("attendanceCode").value.trim();
-    if (!code) {
-        setResult("Enter the live attendance code.", true);
-        return;
-    }
-    submitAttendanceCode(code);
 });
 
 document.getElementById("qrImageInput").addEventListener("change", async (event) => {
