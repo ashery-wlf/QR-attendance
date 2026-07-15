@@ -195,10 +195,34 @@ a{
     box-shadow:0 20px 40px rgba(0,0,0,0.2);
 }
 
+.event-modal-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    margin-bottom:16px;
+}
+
 .event-modal h2{
-    margin:0 0 16px;
+    margin:0;
     font-size:24px;
     color:#0f172a;
+}
+
+.event-modal-close{
+    width:36px;
+    height:36px;
+    border:none;
+    border-radius:10px;
+    background:#f1f5f9;
+    color:#0f172a;
+    font-size:24px;
+    line-height:1;
+    cursor:pointer;
+}
+
+.event-modal-close:hover{
+    background:#e2e8f0;
 }
 
 .event-modal p{
@@ -210,6 +234,27 @@ a{
     display:flex;
     flex-direction:column;
     gap:12px;
+}
+
+.event-modal-actions{
+    display:flex;
+    justify-content:flex-end;
+    margin-top:18px;
+}
+
+.event-modal-cancel{
+    height:40px;
+    border:1px solid #cbd5e1;
+    border-radius:10px;
+    padding:0 18px;
+    background:#fff;
+    color:#0f172a;
+    font-weight:700;
+    cursor:pointer;
+}
+
+.event-modal-cancel:hover{
+    background:#f8fafc;
 }
 
 .event-item{
@@ -275,7 +320,10 @@ renderAppShellStart($conn, [
 <?php if ($showEventModal): ?>
 <div class="event-modal-overlay" id="eventModal">
     <div class="event-modal">
-        <h2>Select an Event</h2>
+        <div class="event-modal-header">
+            <h2>Select an Event</h2>
+            <button type="button" class="event-modal-close" onclick="closeEventModal()" aria-label="Cancel event selection">&times;</button>
+        </div>
         <p>Choose an event to scan attendance for:</p>
         <div class="event-list">
             <?php while ($evt = $userEvents->fetch_assoc()): ?>
@@ -293,8 +341,35 @@ renderAppShellStart($conn, [
                 </div>
             <?php endwhile; ?>
         </div>
+        <div class="event-modal-actions">
+            <button type="button" class="event-modal-cancel" onclick="closeEventModal()">Cancel</button>
+        </div>
     </div>
 </div>
+<script>
+function closeEventModal() {
+    const modal = document.getElementById("eventModal");
+    if (modal) {
+        modal.style.display = "none";
+    }
+}
+
+function selectEvent(eventId) {
+    window.location.href = "scan.php?id=" + eventId;
+}
+
+document.getElementById("eventModal").addEventListener("click", function(event) {
+    if (event.target === this) {
+        closeEventModal();
+    }
+});
+
+document.addEventListener("keydown", function(event) {
+    if (event.key === "Escape") {
+        closeEventModal();
+    }
+});
+</script>
 <?php endif; ?>
 
 <?php if ($event): ?>
