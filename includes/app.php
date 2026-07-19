@@ -520,6 +520,56 @@ function ensureUserSchema($conn)
     $done = true;
 }
 
+function ensurePasswordResetRequestSchema($conn)
+{
+    static $done = false;
+
+    if ($done) {
+        return;
+    }
+
+    ensureUserSchema($conn);
+
+    $conn->query("
+        CREATE TABLE IF NOT EXISTS password_reset_requests (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            email VARCHAR(255) NOT NULL,
+            user_id INT NULL,
+            matched TINYINT(1) NOT NULL DEFAULT 0,
+            status ENUM('pending','resolved','ignored') NOT NULL DEFAULT 'pending',
+            requested_ip VARCHAR(80) NULL,
+            requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_by INT NULL,
+            resolved_at DATETIME NULL,
+            admin_notes TEXT NULL,
+            INDEX idx_status (status),
+            INDEX idx_email (email),
+            INDEX idx_user_id (user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    $columns = appTableColumns($conn, 'password_reset_requests');
+    $additions = [
+        "email" => "ALTER TABLE password_reset_requests ADD COLUMN email VARCHAR(255) NOT NULL DEFAULT ''",
+        "user_id" => "ALTER TABLE password_reset_requests ADD COLUMN user_id INT NULL",
+        "matched" => "ALTER TABLE password_reset_requests ADD COLUMN matched TINYINT(1) NOT NULL DEFAULT 0",
+        "status" => "ALTER TABLE password_reset_requests ADD COLUMN status ENUM('pending','resolved','ignored') NOT NULL DEFAULT 'pending'",
+        "requested_ip" => "ALTER TABLE password_reset_requests ADD COLUMN requested_ip VARCHAR(80) NULL",
+        "requested_at" => "ALTER TABLE password_reset_requests ADD COLUMN requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "resolved_by" => "ALTER TABLE password_reset_requests ADD COLUMN resolved_by INT NULL",
+        "resolved_at" => "ALTER TABLE password_reset_requests ADD COLUMN resolved_at DATETIME NULL",
+        "admin_notes" => "ALTER TABLE password_reset_requests ADD COLUMN admin_notes TEXT NULL",
+    ];
+
+    foreach ($additions as $name => $sql) {
+        if (!isset($columns[$name])) {
+            $conn->query($sql);
+        }
+    }
+
+    $done = true;
+}
+
 function appNormalizeRole($role)
 {
     $map = [
@@ -544,6 +594,29 @@ function appRoleLabel($role)
     ];
 
     return $labels[appNormalizeRole($role)] ?? 'Attendee';
+}
+
+function appAttendeeTypeLabel($type)
+{
+    $labels = [
+        'student' => 'Student',
+        'staff' => 'Staff',
+        'guest' => 'Guest',
+    ];
+
+    return $labels[$type] ?? 'Unknown';
+}
+
+function appAttendeeAffiliationLabel($attendeeType, $organizationName)
+{
+    $typeLabel = appAttendeeTypeLabel($attendeeType);
+    $organizationName = trim((string) $organizationName);
+
+    if ($organizationName === '') {
+        $organizationName = 'Unknown organization';
+    }
+
+    return $typeLabel . ' from ' . $organizationName;
 }
 
 function appCurrentUserRole()
@@ -1705,7 +1778,11 @@ function renderAppShellStart($conn, $options = [])
     ];
 
     if ($role === 'super_admin') {
-        $menuItems[] = ['system-settings.php', 'settings', 'settings', 'System Settings'];
+        ensurePasswordResetRequestSchema($conn);
+        $pendingResetResult = $conn->query("SELECT COUNT(*) AS total FROM password_reset_requests WHERE status='pending'");
+        $pendingResetCount = $pendingResetResult ? (int) $pendingResetResult->fetch_assoc()['total'] : 0;
+        $resetLabel = $pendingResetCount > 0 ? 'System setting (' . $pendingResetCount . ')' : 'System setting';
+        $menuItems[] = ['system-settings.php#password-reset-requests', 'settings', 'settings', $resetLabel];
         $menuItems[] = ['organization-branding.php', 'branding', 'palette', 'Organization Branding'];
         $menuItems[] = ['organizations.php', 'organizations', 'organizations', 'Organizations'];
     } elseif ($role === 'organization_admin') {
@@ -1728,7 +1805,9 @@ function renderAppShellStart($conn, $options = [])
     $sidebarMenu = '';
     foreach ($menuItems as $item) {
         [$href, $key, $icon, $label] = $item;
-        $sidebarMenu .= '<a href="' . h($href) . '" class="app-menu-link ' . ($active === $key ? 'active' : '') . '" title="' . h($label) . '" aria-label="' . h($label) . '">' . appIcon($icon) . '<span>' . h($label) . '</span></a>';
+        $sidebarMenu .= '<a href="' . h($href) .
+         '" class="app-menu-link ' . ($active === $key ? 'active' : '') .
+          '" title="' . h($label) . '" aria-label="' . h($label) . '">' . appIcon($icon) . '<span>' . h($label) . '</span></a>';
     }
     $GLOBALS['app_mobile_menu_items'] = array_slice($menuItems, 0, 6);
 

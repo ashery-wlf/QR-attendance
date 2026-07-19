@@ -281,9 +281,10 @@ $registrantListValue = implode("\n", array_map(function ($item) {
 }, $registrantRows));
 
 $attendanceRows = $conn->query("
-    SELECT u.name, u.email, a.time
+    SELECT u.name, u.email, u.attendee_type, o.name AS user_organization_name, a.time
     FROM attendance a
     JOIN users u ON u.id = a.user_id
+    LEFT JOIN organizations o ON o.id = u.organization_id
     WHERE a.event_id = $event_id
     ORDER BY a.time DESC
 ");
@@ -1244,6 +1245,7 @@ renderAppShellStart($conn, [
                 <tr>
                     <th>Name</th>
                     <th>Email</th>
+                    <th>Affiliation</th>
                     <th>Time</th>
                 </tr>
                 <?php if ($attendanceRows && $attendanceRows->num_rows > 0): ?>
@@ -1251,12 +1253,13 @@ renderAppShellStart($conn, [
                         <tr>
                             <td><?php echo h($row['name']); ?></td>
                             <td><?php echo h($row['email']); ?></td>
+                            <td><?php echo h(appAttendeeAffiliationLabel($row['attendee_type'] ?? '', $row['user_organization_name'] ?? '')); ?></td>
                             <td><?php echo h($row['time']); ?></td>
                         </tr>
                     <?php endwhile; ?>
                 <?php else: ?>
                     <tr>
-                        <td colspan="3">No attendance records yet.</td>
+                        <td colspan="4">No attendance records yet.</td>
                     </tr>
                 <?php endif; ?>
             </table>

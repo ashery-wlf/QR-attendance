@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'update_system') {
     $faqContent = trim($_POST['faq_content'] ?? '');
 
     if ($systemName === '') {
-        appSetFlash("System name is required.", 'error');
+        appSetFlash('error', "System name is required.");
         header("Location: system-settings.php");
         exit();
     }
@@ -47,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'update_system') {
             $logoPath = "uploads/system-logo." . $allowedTypes[$mimeType];
             move_uploaded_file($_FILES['logo_file']['tmp_name'], __DIR__ . "/" . $logoPath);
         } else {
-            appSetFlash("Logo must be PNG, JPG, WebP, or GIF.", 'error');
+            appSetFlash('error', "Logo must be PNG, JPG, WebP, or GIF.");
             header("Location: system-settings.php");
             exit();
         }
@@ -76,12 +76,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'update_system') {
         $stmt->execute();
     }
 
-    appSetFlash("System settings updated.", 'success');
+    appSetFlash('success', "System settings updated.");
     header("Location: system-settings.php");
     exit();
 }
 
 $settings = appGetSystemSettings($conn);
+
+// Handle Password Reset Requests actions (super_admin only)
+ensurePasswordResetRequestSchema($conn);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && strpos($action, 'pr_') === 0) {
+    if (!appVerifyCsrf()) {
+        appSetFlash('error', 'Security check failed.');
+        header('Location: system-settings.php');
+        exit();
+    }
+
+    if ($action === 'pr_reset') {
+        $reqId = (int) ($_POST['request_id'] ?? 0);
+        if ($reqId > 0) {
+            $r = $conn->query("SELECT * FROM password_reset_requests WHERE id=$reqId LIMIT 1");
+            $row = $r && $r->num_rows ? $r->fetch_assoc() : null;
+            if ($row && (int) $row['matched'] === 1 && !empty($row['user_id'])) {
+                $userId = (int) $row['user_id'];
+                $tempPassword = substr(bin2hex(random_bytes(5)), 0, 10);
+                $hash = password_hash($tempPassword, PASSWORD_DEFAULT);
+                $userColumns = appTableColumns($conn, 'users');
+                $passwordSql = isset($userColumns['password_hash'])
+                    ? "UPDATE users SET password = ?, password_hash = ? WHERE id = ?"
+                    : "UPDATE users SET password = ? WHERE id = ?";
+                $upd = $conn->prepare($passwordSql);
+                if (isset($userColumns['password_hash'])) {
+                    $upd->bind_param('ssi', $hash, $hash, $userId);
+                } else {
+                    $upd->bind_param('si', $hash, $userId);
+                }
+                $ok = $upd->execute();
+                $upd->close();
+                if ($ok) {
+                    $adminId = (int) ($_SESSION['user_id'] ?? 0);
+                    $adminNote = $conn->real_escape_string('Temporary password set by System Admin for manual sharing.');
+                    $conn->query("UPDATE password_reset_requests SET status='resolved', resolved_by=$adminId, resolved_at=NOW(), admin_notes='$adminNote' WHERE id=$reqId");
+                    appSetFlash('success', 'Password reset successful. Temporary password: ' . $tempPassword . ' Share it manually with the user.');
+                } else {
+                    appSetFlash('error', 'Could not update password.');
+                }
+            } else {
+                appSetFlash('error', 'Request not matched to a user or invalid.');
+            }
+        }
+    } elseif ($action === 'pr_ignore') {
+        $reqId = (int) ($_POST['request_id'] ?? 0);
+        if ($reqId > 0) {
+            $adminId = (int) ($_SESSION['user_id'] ?? 0);
+            $conn->query("UPDATE password_reset_requests SET status='ignored', resolved_by=$adminId, resolved_at=NOW() WHERE id=$reqId");
+            appSetFlash('success', 'Request marked ignored.');
+        }
+    }
+
+    header('Location: system-settings.php');
+    exit();
+}
 
 $systemStats = [
     'organizations' => 0,
@@ -329,6 +384,55 @@ renderAppShellStart($conn, [
                 <p><?php echo h($answer); ?></p>
             </article>
         <?php endforeach; ?>
+    </div>
+</section>
+
+<section class="panel" id="password-reset-requests" style="margin-top:16px;">
+    <h2>Password Reset Requests</h2>
+    <p style="color:#64748b;">Recent requests submitted via the Forgot Password form. You can reset matched accounts here.</p>
+    <?php $reqs = $conn->query("SELECT pr.*, u.name AS user_name, u.email AS user_email FROM password_reset_requests pr LEFT JOIN users u ON pr.user_id = u.id ORDER BY pr.requested_at DESC LIMIT 200"); ?>
+    <div style="margin-top:12px; max-height:420px; overflow:auto">
+        <table style="width:100%; border-collapse:collapse;">
+            <thead>
+                <tr style="text-align:left; border-bottom:1px solid #e6eef8;">
+                    <th style="padding:8px">Requested At</th>
+                    <th style="padding:8px">Email</th>
+                    <th style="padding:8px">Matched</th>
+                    <th style="padding:8px">Status</th>
+                    <th style="padding:8px">IP</th>
+                    <th style="padding:8px">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php while ($row = $reqs ? $reqs->fetch_assoc() : null): ?>
+                    <tr style="border-bottom:1px solid #f1f5f9;">
+                        <td style="padding:8px"><?php echo h($row['requested_at']); ?></td>
+                        <td style="padding:8px"><?php echo h($row['email']); ?></td>
+                        <td style="padding:8px"><?php echo (int)$row['matched'] ? 'Yes (' . h($row['user_name'] ?: $row['user_email']) . ')' : 'No'; ?></td>
+                        <td style="padding:8px"><?php echo h($row['status']); ?></td>
+                        <td style="padding:8px"><?php echo h($row['requested_ip']); ?></td>
+                        <td style="padding:8px">
+                            <?php if ((int)$row['matched'] === 1 && $row['status'] === 'pending'): ?>
+                                <form method="POST" style="display:inline;">
+                                    <?php echo appCsrfInput(); ?>
+                                    <input type="hidden" name="action" value="pr_reset">
+                                    <input type="hidden" name="request_id" value="<?php echo (int)$row['id']; ?>">
+                                    <button class="btn btn-danger" type="submit">Reset Password</button>
+                                </form>
+                            <?php endif; ?>
+                            <?php if ($row['status'] === 'pending'): ?>
+                                <form method="POST" style="display:inline;margin-left:6px;">
+                                    <?php echo appCsrfInput(); ?>
+                                    <input type="hidden" name="action" value="pr_ignore">
+                                    <input type="hidden" name="request_id" value="<?php echo (int)$row['id']; ?>">
+                                    <button class="btn" type="submit">Ignore</button>
+                                </form>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endwhile; ?>
+            </tbody>
+        </table>
     </div>
 </section>
 

@@ -48,7 +48,7 @@
             top: 0;
             left: 0;
             right: 0;
-            background: rgba(255, 255, 255, 0.49);
+            background: rgba(255, 255, 255, 0.66);
             backdrop-filter: blur(10px);
             z-index: 1000;
             padding: 1rem 2rem;
@@ -397,7 +397,7 @@
             }
 
             .nav-links a:hover {
-                background: rgba(55, 31, 31, 0.08);
+                background: rgba(55, 31, 31, 0.15);
             }
 
             .mobile-menu-btn {

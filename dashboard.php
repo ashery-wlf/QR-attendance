@@ -20,9 +20,11 @@ $pendingCount = 0;
 $upcomingCount = 0;
 $endedCount = 0;
 $liveCount = 0;
+$pendingPasswordResetCount = 0;
 
 if ($user_role === 'super_admin') {
     // Super Admin: Show system-level stats only
+    ensurePasswordResetRequestSchema($conn);
     $joinedCount = 0; // Not used for super admin
     $attendedCount = 0;
     $pendingCount = 0;
@@ -35,6 +37,9 @@ if ($user_role === 'super_admin') {
     
     $eventsCountResult = $conn->query("SELECT COUNT(*) AS total FROM events WHERE deleted = FALSE");
     $liveCount = $eventsCountResult ? (int) $eventsCountResult->fetch_assoc()['total'] : 0;
+
+    $passwordResetResult = $conn->query("SELECT COUNT(*) AS total FROM password_reset_requests WHERE status='pending'");
+    $pendingPasswordResetCount = $passwordResetResult ? (int) $passwordResetResult->fetch_assoc()['total'] : 0;
 } else {
     // All other roles: User-specific and org-specific data
     if ($user_role === 'attendee') {
@@ -224,6 +229,41 @@ $pageCss = <<<'CSS'
     margin:6px 0 0;
     color:#64748b;
     font-size:14px;
+}
+
+.admin-alert{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:14px;
+    margin-bottom:16px;
+    padding:14px 16px;
+    border:1px solid #fed7aa;
+    border-radius:14px;
+    background:#fff7ed;
+    color:#7c2d12;
+}
+
+.admin-alert strong{
+    display:block;
+    font-size:15px;
+}
+
+.admin-alert p{
+    margin:4px 0 0;
+    color:#9a3412;
+    font-size:13px;
+    line-height:1.45;
+}
+
+.admin-alert a{
+    flex-shrink:0;
+    border-radius:10px;
+    padding:10px 12px;
+    background:#ea580c;
+    color:#fff;
+    font-size:13px;
+    font-weight:800;
 }
 
 .stat-card{
@@ -697,6 +737,11 @@ $pageCss = <<<'CSS'
         display:block;
     }
 
+    .admin-alert{
+        align-items:flex-start;
+        flex-direction:column;
+    }
+
     .stats-grid{
         grid-template-columns:repeat(2, minmax(0, 1fr));
         gap:10px;
@@ -929,6 +974,16 @@ renderAppShellStart($conn, [
 
 <?php if ($user_role === 'super_admin'): ?>
     <!-- Super Admin Dashboard -->
+    <?php if ($pendingPasswordResetCount > 0): ?>
+        <section class="admin-alert">
+            <div>
+                <strong><?php echo $pendingPasswordResetCount; ?> password reset request<?php echo $pendingPasswordResetCount === 1 ? '' : 's'; ?> pending</strong>
+                <p>Review the request, reset matched accounts, then share the temporary password with the user manually.</p>
+            </div>
+            <a href="system-settings.php#password-reset-requests">Open Requests</a>
+        </section>
+    <?php endif; ?>
+
     <section class="stats-grid">
         <article class="stat-card">
             <div class="stat-icon lavender"><?php echo appIcon("organizations"); ?></div>

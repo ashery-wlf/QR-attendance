@@ -96,9 +96,11 @@ if ($event_id > 0) {
             }
 
             $exportRecords = $conn->query("
-                SELECT a.*, u.attendee_type, u.reg_no, u.department
+                SELECT a.*, u.attendee_type, u.reg_no, u.department, u.organization_id AS user_organization_id,
+                       o.name AS user_organization_name
                 FROM attendance a
                 LEFT JOIN users u ON u.id = a.user_id
+                LEFT JOIN organizations o ON o.id = u.organization_id
                 WHERE " . implode(' AND ', $exportConditions) . "
                 ORDER BY a.time ASC
             ");
@@ -122,11 +124,11 @@ if ($event_id > 0) {
             </head>
             <body>
                 <table>
-                    <tr><td colspan="16" class="title">Attendance Report</td></tr>
-                    <tr><td class="meta">Event</td><td colspan="15"><?php echo attendanceExcelText($event['name']); ?></td></tr>
-                    <tr><td class="meta">Event Date</td><td colspan="15"><?php echo attendanceExcelText($event['date']); ?></td></tr>
-                    <tr><td class="meta">Report Date</td><td colspan="15"><?php echo attendanceExcelText($reportDate !== '' ? $reportDate : 'All dates'); ?></td></tr>
-                    <tr><td class="meta">Attendee Type</td><td colspan="15"><?php echo attendanceExcelText($attendeeTypeFilter === 'all' ? 'All attendees' : ucfirst($attendeeTypeFilter)); ?></td></tr>
+                    <tr><td colspan="18" class="title">Attendance Report</td></tr>
+                    <tr><td class="meta">Event</td><td colspan="17"><?php echo attendanceExcelText($event['name']); ?></td></tr>
+                    <tr><td class="meta">Event Date</td><td colspan="17"><?php echo attendanceExcelText($event['date']); ?></td></tr>
+                    <tr><td class="meta">Report Date</td><td colspan="17"><?php echo attendanceExcelText($reportDate !== '' ? $reportDate : 'All dates'); ?></td></tr>
+                    <tr><td class="meta">Attendee Type</td><td colspan="17"><?php echo attendanceExcelText($attendeeTypeFilter === 'all' ? 'All attendees' : ucfirst($attendeeTypeFilter)); ?></td></tr>
                     <tr></tr>
                     <tr>
                         <th>No.</th>
@@ -134,6 +136,8 @@ if ($event_id > 0) {
                         <th>Email</th>
                         <th>Phone</th>
                         <th>Attendee Type</th>
+                        <th>Organization</th>
+                        <th>Affiliation</th>
                         <th>Reg No</th>
                         <th>Department</th>
                         <th>Status</th>
@@ -153,6 +157,8 @@ if ($event_id > 0) {
                             $deviceInfo = !empty($row['device_info']) ? json_decode($row['device_info'], true) : [];
                             $browserInfo = !empty($row['browser_info']) ? json_decode($row['browser_info'], true) : [];
                             $rowAttendeeType = $row['attendee_type'] ?: 'unknown';
+                            $rowOrganizationName = $row['user_organization_name'] ?: 'Unknown organization';
+                            $rowAffiliation = appAttendeeAffiliationLabel($rowAttendeeType, $rowOrganizationName);
                             $checkInTimestamp = strtotime($row['time']);
                             ?>
                             <tr>
@@ -161,6 +167,8 @@ if ($event_id > 0) {
                                 <td><?php echo attendanceExcelText($row['user_email']); ?></td>
                                 <td><?php echo attendanceExcelText($row['user_phone']); ?></td>
                                 <td><?php echo attendanceExcelText(ucfirst($rowAttendeeType)); ?></td>
+                                <td><?php echo attendanceExcelText($rowOrganizationName); ?></td>
+                                <td><?php echo attendanceExcelText($rowAffiliation); ?></td>
                                 <td><?php echo attendanceExcelText($row['reg_no']); ?></td>
                                 <td><?php echo attendanceExcelText($row['department']); ?></td>
                                 <td><?php echo attendanceExcelText(attendanceStatusLabel($row['attendance_status'] ?? 'present', $row['notes'] ?? '')); ?></td>
@@ -175,7 +183,7 @@ if ($event_id > 0) {
                             </tr>
                         <?php endwhile;
                     else: ?>
-                        <tr><td colspan="16">No attendance records found for the selected filters.</td></tr>
+                        <tr><td colspan="18">No attendance records found for the selected filters.</td></tr>
                     <?php endif; ?>
                 </table>
             </body>
@@ -188,9 +196,11 @@ if ($event_id > 0) {
             // Event organizers and organization admins can view records for managed events.
             $attendanceData = $conn->query("
                 SELECT a.id, a.user_name, a.user_email, a.user_phone, a.device_info, a.time, a.attendance_status, a.scan_address, a.scan_ip, a.browser_info, a.distance_from_venue, a.phone_matched, a.verification_method, a.check_in_time, a.notes,
-                       u.attendee_type, u.reg_no, u.department
+                       u.attendee_type, u.reg_no, u.department, u.organization_id AS user_organization_id,
+                       o.name AS user_organization_name
                 FROM attendance a
                 LEFT JOIN users u ON u.id = a.user_id
+                LEFT JOIN organizations o ON o.id = u.organization_id
                 WHERE a.event_id = $event_id
                 ORDER BY a.time DESC
             ");
@@ -198,9 +208,11 @@ if ($event_id > 0) {
             // Non-creators can only see their own attendance record.
             $attendanceData = $conn->query("
                 SELECT a.id, a.user_name, a.user_email, a.user_phone, a.device_info, a.time, a.attendance_status, a.scan_address, a.scan_ip, a.browser_info, a.distance_from_venue, a.phone_matched, a.verification_method, a.check_in_time, a.notes,
-                       u.attendee_type, u.reg_no, u.department
+                       u.attendee_type, u.reg_no, u.department, u.organization_id AS user_organization_id,
+                       o.name AS user_organization_name
                 FROM attendance a
                 LEFT JOIN users u ON u.id = a.user_id
+                LEFT JOIN organizations o ON o.id = u.organization_id
                 WHERE a.event_id = $event_id AND a.user_id = $user_id
                 ORDER BY a.time DESC
             ");
@@ -1043,6 +1055,7 @@ renderAppShellStart($conn, [
                             <th>Email</th>
                             <th>Phone</th>
                             <th>Attendee Type</th>
+                            <th>Organization</th>
                             <th>Type Info</th>
                             <th>Status</th>
                             <th>Device Info</th>
@@ -1059,13 +1072,15 @@ renderAppShellStart($conn, [
                                 }
                                 $status = $row['attendance_status'] ?? 'present';
                                 $attendeeType = $row['attendee_type'] ?: 'unknown';
+                                $organizationName = $row['user_organization_name'] ?: 'Unknown organization';
+                                $affiliationLabel = appAttendeeAffiliationLabel($attendeeType, $organizationName);
                                 $typeInfo = 'N/A';
                                 if ($attendeeType === 'student') {
                                     $typeInfo = $row['reg_no'] ? 'Reg No: ' . $row['reg_no'] : 'Reg No: Not set';
                                 } elseif ($attendeeType === 'staff') {
                                     $typeInfo = $row['department'] ? 'Department: ' . $row['department'] : 'Department: Not set';
                                 } elseif ($attendeeType === 'guest') {
-                                    $typeInfo = 'Guest';
+                                    $typeInfo = $affiliationLabel;
                                 }
                                 $browserInfo = [];
                                 if (!empty($row['browser_info'])) {
@@ -1099,7 +1114,8 @@ renderAppShellStart($conn, [
                                     </td>
                                     <td><?php echo h($row['user_email']); ?></td>
                                     <td><?php echo h($row['user_phone']); ?></td>
-                                    <td><?php echo h(ucfirst($attendeeType)); ?></td>
+                                    <td><?php echo h(appAttendeeTypeLabel($attendeeType)); ?></td>
+                                    <td><?php echo h($organizationName); ?></td>
                                     <td><?php echo h($typeInfo); ?></td>
                                     <td>
                                         <span class="badge badge-<?php echo $status; ?>">

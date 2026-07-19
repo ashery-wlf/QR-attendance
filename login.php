@@ -133,7 +133,7 @@ if (isset($_POST['login'])) {
                         <span class="checkmark"></span>
                         Remember me
                     </label>
-                    <a href="#" class="forgot-password">Forgot password?</a>
+                    <a href="forgot-password.php" class="forgot-password">Forgot password?</a>
                 </div>
 
                 <button type="submit" name="login" class="btn btn-primary btn-full">
