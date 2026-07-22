@@ -214,3 +214,21 @@ Proprietary - QR Attendance System
 
 ## Version
 v1.0.0 - April 2026
+
+Swali / Task	Uende page/file gani
+Badili background ya login/register page	[includes/style.css (line 37)](C:/xampp/htdocs/QR-attendance/includes/style.css:37), halafu angalia [login.php (line 78)](C:/xampp/htdocs/QR-attendance/login.php:78) na [registrer.php (line 105)](C:/xampp/htdocs/QR-attendance/registrer.php:105)
+Badili rangi ya dashboard sidebar	[includes/app.php (line 1836)](C:/xampp/htdocs/QR-attendance/includes/app.php:1836)
+Badili rangi ya button kuu kama Create Event, Save, Login	Login/register: [includes/style.css (line 349)](C:/xampp/htdocs/QR-attendance/includes/style.css:349). Dashboard buttons: [includes/app.php (line 1820)](C:/xampp/htdocs/QR-attendance/includes/app.php:1820) au CSS ya page husika
+Badili logo ya system	Kwa UI: [system-settings.php (line 332)](C:/xampp/htdocs/QR-attendance/system-settings.php:332). Kwa default logic: [includes/app.php (line 49)](C:/xampp/htdocs/QR-attendance/includes/app.php:49)
+Badili system name kutoka “QR Attendance Event” kwenda jina la taasisi	[system-settings.php (line 323)](C:/xampp/htdocs/QR-attendance/system-settings.php:323), default iko [includes/app.php (line 47)](C:/xampp/htdocs/QR-attendance/includes/app.php:47)
+Badili rangi ya topbar/mobile navigation	[includes/app.php (line 1962)](C:/xampp/htdocs/QR-attendance/includes/app.php:1962) kwa topbar, [includes/app.php (line 2057)](C:/xampp/htdocs/QR-attendance/includes/app.php:2057) kwa mobile nav
+Badili card background au shadow kwenye dashboard	[dashboard.php (line 203)](C:/xampp/htdocs/QR-attendance/dashboard.php:203), hasa .stat-card, cards, panels
+Badili rangi za badges kama Present, Late, Absent, Active, Disabled	Attendance badges: [attendance.php (line 724)](C:/xampp/htdocs/QR-attendance/attendance.php:724). Report badges: [report.php (line 466)](C:/xampp/htdocs/QR-attendance/report.php:466). Global badges: [includes/style.css (line 1649)](C:/xampp/htdocs/QR-attendance/includes/style.css:1649)
+Badili table header color kwenye reports/attendance	Global table: [includes/style.css (line 1628)](C:/xampp/htdocs/QR-attendance/includes/style.css:1628). Attendance export/table: [attendance.php (line 119)](C:/xampp/htdocs/QR-attendance/attendance.php:119). Report export/table: [report.php (line 146)](C:/xampp/htdocs/QR-attendance/report.php:146)
+Badili chart colors kwenye attendance.php au report.php	[attendance.php (line 1308)](C:/xampp/htdocs/QR-attendance/attendance.php:1308), [report.php (line 884)](C:/xampp/htdocs/QR-attendance/report.php:884)
+Ongeza field mpya kwenye register/profile mfano College, Year of Study, Program	Register form: [registrer.php (line 135)](C:/xampp/htdocs/QR-attendance/registrer.php:135). Profile drawer: [includes/app.php (line 2195)](C:/xampp/htdocs/QR-attendance/includes/app.php:2195). Database/user schema: [includes/app.php (line 310)](C:/xampp/htdocs/QR-attendance/includes/app.php:310)
+Ongeza filter kwenye attendance report mfano department, attendee type, date	[attendance.php (line 1)](C:/xampp/htdocs/QR-attendance/attendance.php:1) na [report.php (line 1)](C:/xampp/htdocs/QR-attendance/report.php:1)
+Ongeza export option mfano PDF au Excel format nyingine	Attendance export: [attendance.php (line 109)](C:/xampp/htdocs/QR-attendance/attendance.php:109). Report export: [report.php (line 136)](C:/xampp/htdocs/QR-attendance/report.php:136)
+Ongeza role mpya au badili menu kulingana na role	Role/session logic: [includes/auth.php (line 24)](C:/xampp/htdocs/QR-attendance/includes/auth.php:24). Menu logic: [includes/app.php (line 1696)](C:/xampp/htdocs/QR-attendance/includes/app.php:1696)
+Ongeza/rekebisha QR scan verification mfano distance limit, time window, phone matching	Scan page: [scan.php (line 1)](C:/xampp/htdocs/QR-attendance/scan.php:1). Submit/save attendance: [attendance-submit.php (line 1)](C:/xampp/htdocs/QR-attendance/attendance-submit.php:1), [save-attendance.php (line 1)](C:/xampp/htdocs/QR-attendance/save-attendance.php:1)
+Badili text za Help/FAQ ndani ya system-settings.php	UI form: [system-settings.php (line 340)](C:/xampp/htdocs/QR-attendance/system-settings.php:340). Default text: [includes/app.php (line 50)](C:/xampp/htdocs/QR-attendance/includes/app.php:50)
