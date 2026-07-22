@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Jul 11, 2026 at 02:17 PM
+-- Generation Time: Jul 22, 2026 at 12:12 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -372,7 +372,7 @@ CREATE TABLE `organizations` (
 
 INSERT INTO `organizations` (`id`, `name`, `description`, `logo`, `website`, `contact_email`, `is_active`, `created_by`, `created_at`, `updated_at`, `brand_color`, `background_color`) VALUES
 (1, 'MZUMBE UNIVERSITY', 'mzumbe university event attendance management', 'logo.png', '', 'succedkanael@gmail.com', 1, NULL, '2026-05-23 20:39:28', '2026-06-20 10:34:44', '#2563ff', '#ffffff'),
-(2, 'UDOM UNIVERSITY', 'Security management', NULL, NULL, NULL, 0, NULL, '2026-05-24 21:37:18', '2026-06-05 06:44:34', '#2563ff', '#ffffff');
+(2, 'UDOM UNIVERSITY', 'Security management', NULL, '', 'meshackkaaya@gmail.com', 0, NULL, '2026-05-24 21:37:18', '2026-07-18 09:01:46', '#2563ff', '#ffffff');
 
 -- --------------------------------------------------------
 
@@ -425,6 +425,32 @@ INSERT INTO `participants` (`id`, `user_id`, `event_id`, `created_at`, `particip
 (25, 2, 15, '2026-07-11 10:53:50', 'Meshack Kaaya', 'meshackkaaya50@gmail.com', '+255794872433', 'registered', '2026-07-11 10:53:50', ''),
 (26, 7, 15, '2026-07-11 10:56:07', 'Sabrina', 'sabrina@gmail.com', '079 487 2433', 'registered', '2026-07-11 10:56:07', ''),
 (27, 12, 15, '2026-07-11 10:58:54', 'Asante', 'symon@gmail.com', '07845845848', 'registered', '2026-07-11 10:58:54', '');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `password_reset_requests`
+--
+
+CREATE TABLE `password_reset_requests` (
+  `id` int(11) NOT NULL,
+  `email` varchar(255) NOT NULL,
+  `user_id` int(11) DEFAULT NULL,
+  `matched` tinyint(1) NOT NULL DEFAULT 0,
+  `status` enum('pending','resolved','ignored') NOT NULL DEFAULT 'pending',
+  `requested_ip` varchar(80) DEFAULT NULL,
+  `requested_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `resolved_by` int(11) DEFAULT NULL,
+  `resolved_at` datetime DEFAULT NULL,
+  `admin_notes` text DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Dumping data for table `password_reset_requests`
+--
+
+INSERT INTO `password_reset_requests` (`id`, `email`, `user_id`, `matched`, `status`, `requested_ip`, `requested_at`, `resolved_by`, `resolved_at`, `admin_notes`) VALUES
+(1, 'succedkanael@gmail.com', 3, 1, 'resolved', '::1', '2026-07-18 09:02:19', 1, '2026-07-18 12:02:57', 'Temporary password set by System Admin for manual sharing.');
 
 -- --------------------------------------------------------
 
@@ -573,16 +599,17 @@ CREATE TABLE `users` (
 --
 
 INSERT INTO `users` (`id`, `first_name`, `last_name`, `email`, `phone`, `password_hash`, `role`, `profile_image`, `is_active`, `email_verified`, `last_login`, `created_at`, `updated_at`, `name`, `password`, `organization_id`, `reg_no`, `department`, `attendee_type`, `status`) VALUES
-(1, 'Kaaya', 'Meshack', 'akilykaaya@gmail.com', '0794872433', '$2y$10$OosSIlrKzwKoa5PcQf.asO0JQqpyQ2osB5d0gjFaG9.KsL9kvLtXi', 'super_admin', 'uploads/profile_1_1779225316.jpg', 1, 0, '2026-07-11 11:43:45', '2026-05-19 10:56:31', '2026-07-11 08:43:45', 'Kaaya Meshack', '$2y$10$OosSIlrKzwKoa5PcQf.asO0JQqpyQ2osB5d0gjFaG9.KsL9kvLtXi', NULL, NULL, NULL, NULL, 'active'),
-(2, '', '', 'meshackkaaya50@gmail.com', '+255794872433', '', 'attendee', 'uploads/profile_2_c6f3abc88f9f0970.jpg', 1, 0, '2026-07-11 13:53:38', '2026-05-22 07:52:15', '2026-07-11 10:53:38', 'Meshack Kaaya', '$2y$10$tf.h0YVibH6UMiIRSiCzpuYLJ8AOQYdD1tB4vl/7aW9HexeyvMk/S', 1, '14233057/T.23', 'CSS', 'student', 'active'),
-(3, '', '', 'succedkanael@gmail.com', '0794872433', '$2y$10$AGfruNtZ5dVkeoHwABfgxOzt9kk//Rp7ta8dutM5yTtu0NtWD9ZyG', 'organization_admin', NULL, 1, 0, '2026-07-11 11:55:07', '2026-05-23 21:23:24', '2026-07-11 08:55:07', 'succed Akily', '$2y$10$AGfruNtZ5dVkeoHwABfgxOzt9kk//Rp7ta8dutM5yTtu0NtWD9ZyG', 1, NULL, NULL, NULL, 'active'),
-(4, '', '', 'akilyhawkwolf@gmail.com', '+255773702533', '$2y$10$OitOWajNiYNfxvL9WQyuWO.4wKX1hneeybFgRPTAB/iVtif1mnE8q', 'event_organizer', NULL, 1, 0, '2026-07-11 12:31:59', '2026-05-23 21:25:27', '2026-07-11 09:31:59', 'Akily2026', '$2y$10$OitOWajNiYNfxvL9WQyuWO.4wKX1hneeybFgRPTAB/iVtif1mnE8q', 1, NULL, 'FST', NULL, 'active'),
+(1, 'Kaaya', 'Meshack', 'akilykaaya@gmail.com', '0794872433', '$2y$10$OosSIlrKzwKoa5PcQf.asO0JQqpyQ2osB5d0gjFaG9.KsL9kvLtXi', 'super_admin', 'uploads/profile_1_1779225316.jpg', 1, 0, '2026-07-18 21:31:54', '2026-05-19 10:56:31', '2026-07-18 18:31:54', 'Kaaya Meshack', '$2y$10$OosSIlrKzwKoa5PcQf.asO0JQqpyQ2osB5d0gjFaG9.KsL9kvLtXi', NULL, NULL, NULL, NULL, 'active'),
+(2, '', '', 'meshackkaaya50@gmail.com', '+255794872433', '', 'attendee', 'uploads/profile_2_c6f3abc88f9f0970.jpg', 1, 0, '2026-07-18 12:09:39', '2026-05-22 07:52:15', '2026-07-18 09:09:39', 'Meshack Kaaya', '$2y$10$tf.h0YVibH6UMiIRSiCzpuYLJ8AOQYdD1tB4vl/7aW9HexeyvMk/S', 1, '14233057/T.23', 'CSS', 'student', 'active'),
+(3, '', '', 'succedkanael@gmail.com', '0794872433', '$2y$10$ZHhuKjGCDlZCRGVcZRn6Gue/wQT6kvxv1HzE.Dk9fsUmzy1MgZXU2', 'organization_admin', NULL, 1, 0, '2026-07-18 12:04:28', '2026-05-23 21:23:24', '2026-07-18 09:04:28', 'succed Akily', '$2y$10$vs1VPl/3zGFP.iFGl8XOjO6cZHGCt4/nn58p7vN0.J0TCyejCBYAa', 1, NULL, NULL, NULL, 'active'),
+(4, '', '', 'akilyhawkwolf@gmail.com', '+255773702533', '$2y$10$OitOWajNiYNfxvL9WQyuWO.4wKX1hneeybFgRPTAB/iVtif1mnE8q', 'event_organizer', NULL, 1, 0, '2026-07-18 12:06:34', '2026-05-23 21:25:27', '2026-07-18 09:06:34', 'Akily2026', '$2y$10$OitOWajNiYNfxvL9WQyuWO.4wKX1hneeybFgRPTAB/iVtif1mnE8q', 1, NULL, 'FST', NULL, 'active'),
 (7, '', '', 'sabrina@gmail.com', '079 487 2433', '$2y$10$PgRHyTo7y5WscaOALCnAVeaDI2jOrk4qzF/IiiCS7dyPLM8BIIb0i', 'attendee', NULL, 1, 0, '2026-07-11 13:55:49', '2026-05-27 06:18:18', '2026-07-11 10:55:49', 'Sabrina', '$2y$10$PgRHyTo7y5WscaOALCnAVeaDI2jOrk4qzF/IiiCS7dyPLM8BIIb0i', 1, '17231303/T.23', 'FSS', 'student', 'active'),
 (8, '', '', 'fuadommy@gmail.com', '0714247229', '$2y$10$.2nRGBbuW5SFIffU3iqofesqLOXKqqD07s6RK2tWTFW9iVNFKk2LK', 'attendee', NULL, 1, 0, '2026-06-03 15:16:21', '2026-06-03 12:16:00', '2026-06-03 12:16:21', 'fuad', '$2y$10$.2nRGBbuW5SFIffU3iqofesqLOXKqqD07s6RK2tWTFW9iVNFKk2LK', 1, '14233050/t.24', 'css', 'student', 'active'),
 (9, '', '', 'brownlizer@gmail.com', '0615257868', '$2y$10$GMzLijauFVUeo9PgsiJdnu7qNqllo.KGVPM.474yUvHucbwImrWe6', 'attendee', NULL, 1, 0, '2026-06-03 15:18:24', '2026-06-03 12:18:00', '2026-06-03 12:18:24', 'Robert Brown', '$2y$10$GMzLijauFVUeo9PgsiJdnu7qNqllo.KGVPM.474yUvHucbwImrWe6', 1, '14233038/t.24', 'Css', 'student', 'active'),
 (10, '', '', 'nicoedgar25@gmail.com', '0755665356', '$2y$10$jFBEkaCNiyWnAjy3adH5zuXrzZcxnWc3xwpcc0FTXXVM0nbIyLpqW', 'attendee', NULL, 1, 0, '2026-06-03 21:19:15', '2026-06-03 18:00:12', '2026-06-03 18:19:15', 'Edgar Nico', '$2y$10$jFBEkaCNiyWnAjy3adH5zuXrzZcxnWc3xwpcc0FTXXVM0nbIyLpqW', 1, '14233046/T.24', 'Css', 'student', 'active'),
 (11, '', '', 'edgar@gmail.com', '0793106104', '$2y$10$Jr4AV5kpEEWVJyBMbBLhUesvx8pnMgSM4A.72iVKaLsA3r.0gK0YG', 'attendee', NULL, 1, 0, '2026-07-03 19:56:15', '2026-07-03 16:55:50', '2026-07-03 16:56:15', 'edgar nico', '$2y$10$Jr4AV5kpEEWVJyBMbBLhUesvx8pnMgSM4A.72iVKaLsA3r.0gK0YG', 1, '14233045/T.24', 'css', 'student', 'active'),
-(12, '', '', 'symon@gmail.com', '07845845848', '$2y$10$u1ODulES/mIvE.ZHUL3o6u6kyFUhSl.4admXNkGz0BceRTafFxwUS', 'attendee', NULL, 1, 0, '2026-07-11 13:58:34', '2026-07-11 10:57:59', '2026-07-11 10:58:34', 'Asante', '$2y$10$u1ODulES/mIvE.ZHUL3o6u6kyFUhSl.4admXNkGz0BceRTafFxwUS', 1, '17231303/T.23', 'FSS', 'student', 'active');
+(12, '', '', 'symon@gmail.com', '07845845848', '$2y$10$u1ODulES/mIvE.ZHUL3o6u6kyFUhSl.4admXNkGz0BceRTafFxwUS', 'attendee', NULL, 1, 0, '2026-07-11 13:58:34', '2026-07-11 10:57:59', '2026-07-11 10:58:34', 'Asante', '$2y$10$u1ODulES/mIvE.ZHUL3o6u6kyFUhSl.4admXNkGz0BceRTafFxwUS', 1, '17231303/T.23', 'FSS', 'student', 'active'),
+(13, '', '', 'meshackkaaya@gmail.com', '0768686756', '$2y$10$RyvoEXT2zVcUe/7s3eqNcOGnimKLysEX8MhcmpfgKB6qOSCBcdHoW', 'organization_admin', NULL, 1, 0, '2026-07-15 19:31:56', '2026-07-15 16:29:48', '2026-07-15 16:31:56', 'Hero', '$2y$10$RyvoEXT2zVcUe/7s3eqNcOGnimKLysEX8MhcmpfgKB6qOSCBcdHoW', 2, NULL, NULL, NULL, 'active');
 
 -- --------------------------------------------------------
 
@@ -784,6 +811,15 @@ ALTER TABLE `participants`
   ADD KEY `idx_event_id` (`event_id`);
 
 --
+-- Indexes for table `password_reset_requests`
+--
+ALTER TABLE `password_reset_requests`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_status` (`status`),
+  ADD KEY `idx_email` (`email`),
+  ADD KEY `idx_user_id` (`user_id`);
+
+--
 -- Indexes for table `qr_codes`
 --
 ALTER TABLE `qr_codes`
@@ -937,6 +973,12 @@ ALTER TABLE `participants`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=28;
 
 --
+-- AUTO_INCREMENT for table `password_reset_requests`
+--
+ALTER TABLE `password_reset_requests`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+
+--
 -- AUTO_INCREMENT for table `qr_codes`
 --
 ALTER TABLE `qr_codes`
@@ -964,7 +1006,7 @@ ALTER TABLE `settings`
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
 
 --
 -- AUTO_INCREMENT for table `user_organizations`
